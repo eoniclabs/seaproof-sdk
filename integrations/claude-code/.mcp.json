@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "seaproof": {
+      "type": "http",
+      "url": "https://api.seaproof.io/mcp"
+    }
+  }
+}

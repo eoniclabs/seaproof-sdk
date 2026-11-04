@@ -1,0 +1,68 @@
+{
+  "name": "@seaproof/react",
+  "version": "0.1.0",
+  "description": "Feedback widget for React apps: bug reports from testers, feedback and ideas from users, with screenshots. For Seaproof.",
+  "license": "MIT",
+  "homepage": "https://seaproof.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eoniclabs/seaproof-sdk.git",
+    "directory": "sdks/react/react"
+  },
+  "bugs": "https://github.com/eoniclabs/seaproof-sdk/issues",
+  "keywords": [
+    "react",
+    "feedback",
+    "bug-report",
+    "feedback-widget",
+    "seaproof"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean --external react",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepack": "node ../copy-package-docs.mjs",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@seaproof/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^29.1.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsup": "^9.0.0",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.11"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "seaproof",
+  "version": "0.1.0",
+  "description": "Seaproof for Claude Code: add in-app bug reporting and user feedback to a React, Next.js or Flutter app, and triage reports through the Seaproof MCP server.",
+  "author": { "name": "Eonic Labs", "url": "https://seaproof.io" },
+  "homepage": "https://seaproof.io/docs/claude-code-plugin",
+  "repository": "https://github.com/eoniclabs/seaproof-sdk",
+  "license": "MIT",
+  "keywords": ["feedback", "bug reports", "beta testing", "user feedback", "flutter", "react", "mcp", "triage"]
+}

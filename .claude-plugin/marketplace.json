@@ -1,0 +1,13 @@
+{
+  "name": "seaproof",
+  "owner": { "name": "Eonic Labs", "url": "https://seaproof.io" },
+  "metadata": { "description": "Seaproof plugins for Claude Code" },
+  "plugins": [
+    {
+      "name": "seaproof",
+      "source": "./integrations/claude-code",
+      "description": "Add in-app bug reporting and user feedback to an app, and triage Seaproof reports over MCP.",
+      "category": "development"
+    }
+  ]
+}

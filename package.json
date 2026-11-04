@@ -1,0 +1,22 @@
+{
+  "name": "seaproof-sdk",
+  "private": true,
+  "workspaces": [
+    "sdks/react/core",
+    "sdks/react/react",
+    "examples/react-vite"
+  ],
+  "engines": {
+    "node": ">=22",
+    "npm": ">=11"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run build -w @seaproof/core && npm run build -w @seaproof/react && npm run typecheck --workspaces --if-present"
+  },
+  "allowScripts": {
+    "esbuild": true
+  },
+  "packageManager": "npm@11.21.1"
+}

@@ -1,0 +1,33 @@
+name: seaproof
+description: >-
+  Seaproof SDK for Flutter. Lets testers report bugs and end users send feedback and ideas
+  from mobile and desktop apps, with screenshots, annotations and app context.
+version: 0.1.0
+homepage: https://seaproof.io
+repository: https://github.com/eoniclabs/seaproof-sdk/tree/main/sdks/flutter
+issue_tracker: https://github.com/eoniclabs/seaproof-sdk/issues
+documentation: https://seaproof.io/docs/flutter.md
+topics:
+  - feedback
+  - bug-report
+  - screenshot
+  - testing
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+  flutter: ">=3.38.1"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  # Same majors as Skribera, so both can live in one app without version conflicts.
+  device_info_plus: ^13.3.0
+  package_info_plus: ^10.2.1
+  sensors_plus: ^7.1.1
+  shared_preferences: ^2.5.5
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter

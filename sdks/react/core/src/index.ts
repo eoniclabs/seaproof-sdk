@@ -1,0 +1,12 @@
+export { createSeaproof, newConversationId } from "./client";
+export type { SeaproofClient } from "./client";
+export { browserContext } from "./context";
+export { Diagnostics, installCapture, redactUrl } from "./diagnostics";
+export type { CaptureOptions, DiagnosticEntry, DiagnosticKind } from "./diagnostics";
+export { describeError, ERROR_REFERENCE_URL, SeaproofError } from "./errors";
+export { canRecordScreen, ScreenRecorder } from "./recorder";
+export type { RecorderOptions, ScreenRecording } from "./recorder";
+export { defaultStorage, ReporterIdentity } from "./reporter";
+export { captureScreenshot, excludedFromScreenshot } from "./screenshot";
+export { SDK_VERSION } from "./version";
+export type * from "./types";
