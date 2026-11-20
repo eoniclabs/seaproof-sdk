@@ -18,6 +18,9 @@ tell the user what you did at the end.
 
 If the repository holds several apps, ask which one, unless the user already said.
 
+The whole flow, kept up to date, is at https://seaproof.io/docs/start.md. Follow it if it differs
+from the steps below.
+
 ## 2. Get a project and an API key
 
 Use the Seaproof MCP tools (the server is part of this plugin). If they are not connected, ask
@@ -27,7 +30,8 @@ free, no card).
 
 1. `list_projects`. If a project for this app exists, use it; do not create a duplicate.
 2. Otherwise `create_project` with the app's name.
-3. `create_api_key` with `environment: "test"` for development. For a web app, pass
+3. `list_environments`, then `create_api_key` in an environment in **test** mode for development
+   (a new project has Test and Staging in test mode, Production in production mode). For a web app, pass
    `allowedOrigins` with the dev server origin (such as `http://localhost:5173` or
    `http://localhost:3000`) and any staging origin the user names.
 
@@ -73,7 +77,7 @@ Look for screens with personal or payment data. Add `data-seaproof-mask` (web) o
 Add the section from https://seaproof.io/docs/agents-md.md to `AGENTS.md` or `CLAUDE.md`
 (create `AGENTS.md` if neither exists), with the project's variable names.
 
-## 7. Offer forwarding (optional)
+## 7. Offer forwarding and notifications (optional)
 
 Ask whether triaged bugs should go to the repository's tracker. If yes, and the setup tools are
 connected: `list_tracker_connections`; if no account fits, `connect_tracker` and give the user the
@@ -81,6 +85,11 @@ link, then wait until they say they are done. Pick the target that matches this 
 `git remote` (GitHub `owner/name`, or the Azure DevOps organization and project) with
 `list_tracker_options`, then `create_integration` and `test_integration`. Never ask for an access
 token; if signing in is not set up, point the user to **Integrations** in Seaproof.
+
+Ask also whether the team wants a message in Slack or Microsoft Teams when reports arrive. If yes,
+ask for the channel's incoming webhook URL, then `create_webhook` with `kind` `slack` or `teams`
+(or `webhook` for the team's own HTTPS endpoint) and `test_webhook`. A webhook's signing secret is
+shown once: store it as a secret where the receiver runs, never in the repository.
 
 ## 8. Offer a triage job (optional)
 
@@ -93,6 +102,6 @@ the key into a file in the repository or repeat it in chat.
 
 Build or type-check the app. Then tell the user how to see it work: start the app with the
 test key, press **Feedback** (web) or shake the device (Flutter), send a report and watch it
-arrive in the Seaproof inbox. For production, they create a production key and add their own
+arrive in the Seaproof inbox. For production, they create a key in a production-mode environment and add their own
 "Send feedback" button (`useSeaproof().open()` or `SeaproofFeedbackButton`). If a request
 fails, the console shows an error code with a link to https://seaproof.io/docs/errors.

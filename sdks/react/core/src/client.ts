@@ -14,6 +14,7 @@ import type {
   Reporter,
   ReviewResult,
   SeaproofBranding,
+  SeaproofLauncherSettings,
   SeaproofOptions,
   SeaproofProject,
   SubmittedFeedback,
@@ -54,6 +55,8 @@ export interface SeaproofClient {
   readonly isTesterMode: boolean;
   /** The project's colour and logo from the admin, once known; undefined with `branding: false`. */
   readonly branding: SeaproofBranding | undefined;
+  /** The project's built-in button settings, once known. */
+  readonly launcher?: SeaproofLauncherSettings | null | undefined;
   /**
    * Sets the signed-in user, or null on sign-out. Used for submissions without their own
    * reporter, and, with a `userHash`, to share conversations and votes across devices.
@@ -77,7 +80,7 @@ export interface SeaproofClient {
    * Adds files to one of this browser's items after it was sent, such as a marked-up screenshot
    * or a recording made later in the conversation. Resolves when they are stored.
    */
-  addAttachments(feedbackId: string, attachments: AttachmentInput[]): Promise<void>;
+  addAttachments(feedbackId: string, attachments: AttachmentInput[], messageId?: string): Promise<void>;
   /** The ideas the team published, most votes first. */
   ideas(): Promise<PublicIdea[]>;
   vote(ideaId: string): Promise<void>;
@@ -93,7 +96,9 @@ export interface SeaproofClient {
    * Pass the same `conversationId` (from {@link newConversationId}) for every call about one
    * draft, so they count as one Assist conversation against the plan's monthly quota.
    */
-  review(type: NonNullable<FeedbackInput["type"]>, description: string, conversationId?: string): Promise<ReviewResult>;
+  review(type: NonNullable<FeedbackInput["type"]>, description: string, conversationId?: string, feedbackId?: string): Promise<ReviewResult>;
+  /** Records the question before showing it in the widget. */
+  recordAssistQuestion?(feedbackId: string, receipt: string): Promise<boolean>;
   /** Stops capturing and restores console, fetch and XMLHttpRequest. */
   dispose(): void;
 }
@@ -124,6 +129,7 @@ export function createSeaproof(options: SeaproofOptions): SeaproofClient {
   let environment: EnvironmentMode | undefined;
   let environmentName: string | undefined;
   let branding: SeaproofBranding | undefined;
+  let launcher: SeaproofLauncherSettings | null | undefined;
   let reporter: Reporter | undefined = options.reporter;
 
   /** The verified user's headers; an id without a hash proves nothing, so it is not sent. */
@@ -179,6 +185,9 @@ export function createSeaproof(options: SeaproofOptions): SeaproofClient {
     get branding() {
       return branding;
     },
+    get launcher() {
+      return launcher;
+    },
     identify(next) {
       reporter = next ?? undefined;
     },
@@ -194,6 +203,7 @@ export function createSeaproof(options: SeaproofOptions): SeaproofClient {
         environment = modeOf(project);
         environmentName = project.environmentName;
         if (options.branding !== false) branding = project.branding;
+        launcher = project.launcher;
         listeners.forEach((l) => l());
       } catch (error) {
         console.warn(`Seaproof: could not fetch the project for the API key. ${describeError(error)}`);
@@ -266,9 +276,10 @@ export function createSeaproof(options: SeaproofOptions): SeaproofClient {
       return (await (await api(`/api/v1/sdk/me/feedback/${encodeURIComponent(feedbackId)}/messages`, { body })).json()) as ConversationMessage;
     },
 
-    async addAttachments(feedbackId, files) {
+    async addAttachments(feedbackId, files, messageId) {
       const response = await api(`/api/v1/sdk/me/feedback/${encodeURIComponent(feedbackId)}/attachments`, {
         attachments: files.map(describeAttachment),
+        messageId,
       });
       const { uploads } = (await response.json()) as { uploads: UploadInstruction[] };
       await upload(feedbackId, uploads, files);
@@ -302,11 +313,20 @@ export function createSeaproof(options: SeaproofOptions): SeaproofClient {
       return (await (await api("/api/v1/sdk/assist/suggestions", { text, type })).json()) as Suggestion[];
     },
 
-    async review(type, description, conversationId) {
+    async review(type, description, conversationId, feedbackId) {
       try {
-        return (await (await api("/api/v1/sdk/assist/review", { type, description, conversationId })).json()) as ReviewResult;
+        return (await (await api("/api/v1/sdk/assist/review", { type, description, conversationId, feedbackId })).json()) as ReviewResult;
       } catch {
         return { questions: [], limited: false };
+      }
+    },
+
+    async recordAssistQuestion(feedbackId, receipt) {
+      try {
+        await api("/api/v1/sdk/assist/questions/shown", { feedbackId, receipt });
+        return true;
+      } catch {
+        return false;
       }
     },
 

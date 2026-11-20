@@ -177,7 +177,10 @@ class _ScreenshotAnnotatorState extends State<ScreenshotAnnotator> {
                 onPressed: _marks.isEmpty ? null : () => setState(_marks.removeLast),
               ),
               const SizedBox(width: 4),
-              FilledButton(onPressed: _rendering ? null : _done, child: Text(strings.done)),
+              FilledButton(
+                onPressed: _rendering ? null : _done,
+                child: Text(_marks.isEmpty ? strings.close : strings.applyScreenshotEdits),
+              ),
             ],
           ),
         ),

@@ -1,6 +1,6 @@
 {
   "name": "@seaproof/react",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "description": "Feedback widget for React apps: bug reports from testers, feedback and ideas from users, with screenshots. For Seaproof.",
   "license": "MIT",
   "homepage": "https://seaproof.io",
@@ -42,7 +42,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "@seaproof/core": "0.1.0"
+    "@seaproof/core": "0.1.0-beta.1"
   },
   "peerDependencies": {
     "react": ">=18"

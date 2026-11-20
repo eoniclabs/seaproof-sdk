@@ -81,6 +81,17 @@ export interface SeaproofProject {
   environmentName?: string;
   environmentId?: string;
   branding?: SeaproofBranding;
+  /** The built-in feedback button's project settings. Null or absent uses SDK defaults. */
+  launcher?: SeaproofLauncherSettings | null;
+}
+
+export type LauncherPosition = "top-left" | "middle-left" | "bottom-left" | "top-right" | "middle-right" | "bottom-right";
+
+export interface SeaproofLauncherSettings {
+  position: LauncherPosition | null;
+  label: string | null;
+  orientation: "horizontal" | "vertical";
+  avoidObstructions: boolean;
 }
 
 /** The look set for the project in the Seaproof admin. Your own CSS variables win over it. */
@@ -149,6 +160,14 @@ export interface ConversationMessage {
   createdAt: string;
 }
 
+export interface ReporterAttachment {
+  id: string;
+  kind: "screenshot" | "recording";
+  url: string;
+  createdAt: string;
+  messageId?: string | null;
+}
+
 export interface OwnFeedbackDetail {
   id: string;
   number: number;
@@ -158,6 +177,10 @@ export interface OwnFeedbackDetail {
   status: PublicStatus;
   createdAt: string;
   messages: ConversationMessage[];
+  /** Confirmed media with short-lived download URLs. */
+  attachments?: ReporterAttachment[];
+  /** Recent changes to the public status of this report. */
+  statusUpdates?: { id: string; status: PublicStatus; createdAt: string }[];
 }
 
 /** An idea the team published on the project's idea board. */
@@ -177,7 +200,7 @@ export interface PublicIdea {
 export interface AssistSettings {
   /** Known problems and public ideas like what the user is writing. */
   suggestions: boolean;
-  /** Up to two questions about what a report is missing, before it is sent. */
+  /** Up to five questions about what a report is missing, asked after it is saved. */
   followUpQuestions: boolean;
 }
 
@@ -193,6 +216,8 @@ export interface Suggestion {
 
 export interface ReviewResult {
   questions: string[];
+  /** Receipts for saving the corresponding questions when shown on a report. */
+  questionReceipts?: string[] | null;
   /** No questions this time because the organization's monthly Assist limit is reached. */
   limited: boolean;
 }

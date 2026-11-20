@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../client.dart';
@@ -13,6 +13,8 @@ import '../strings.dart';
 import '../theme.dart';
 import 'annotator.dart';
 import 'assist_views.dart';
+import 'chat.dart';
+import 'ios_composer.dart';
 import 'reporter_views.dart';
 
 /// The feedback form. Full screen on phones, a centred card on wider screens.
@@ -94,10 +96,11 @@ final class _YourText extends _Line {
 }
 
 final class _YourImage extends _Line {
-  const _YourImage(this.png, this.label);
+  const _YourImage(this.png, this.label, {this.recording});
 
   final Uint8List png;
   final String label;
+  final Uint8List? recording;
 }
 
 /// The conversation that makes a report. The first message saves it, with the screenshot
@@ -106,18 +109,28 @@ final class _YourImage extends _Line {
 class _FeedbackPanelState extends State<FeedbackPanel> {
   final TextEditingController _description = TextEditingController();
   final TextEditingController _email = TextEditingController();
+  final FocusNode _emailFocus = FocusNode();
+  final GlobalKey<IosComposerState> _iosComposer = GlobalKey();
+  final GlobalKey _pastedPreview = GlobalKey();
   final ScrollController _scroll = ScrollController();
   late FeedbackType _type;
   late bool _mayContact;
+  bool _showEmail = false;
+  bool _emailEdited = false;
 
   /// The screen as it was when the panel opened. Kept to mark it up later in the conversation.
   Uint8List? _screenshot;
 
   /// What goes out with the next message.
   Uint8List? _pendingShot;
+  FeedbackAttachment? _pastedShot;
   bool _pendingMarked = false;
   ui.Image? _decoded;
+  Uint8List? _playingRecording;
   bool _annotating = false;
+  bool _annotatingPasted = false;
+  bool _openingAnnotator = false;
+  bool _recordingForOwn = false;
   final List<_Line> _lines = [];
   SubmittedFeedback? _saved;
   bool _finished = false;
@@ -130,7 +143,7 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
   AssistSettings _assist = AssistSettings.off;
   List<Suggestion> _suggestions = const [];
   final Set<String> _voted = {};
-  List<String> _questions = const [];
+  List<({String text, String? receipt})> _questions = const [];
 
   /// All Assist help for this report is one conversation against the plan's quota.
   final String _conversationId = newConversationId();
@@ -142,10 +155,14 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
   static const _minSuggestLength = 10;
 
   /// Seaproof Assist asks at most this many questions per report.
-  static const _maxQuestions = 2;
+  static const _maxQuestions = 5;
+
+  /// At most this share of the height above the composer goes to suggestions and previews.
+  static const _extrasShare = 0.45;
 
   SeaproofController get _controller => widget.controller;
   SeaproofStrings get _strings => widget.strings;
+  String get _reporterEmail => (_emailEdited ? _email.text : _controller.user?.email ?? '').trim();
 
   @override
   void initState() {
@@ -168,12 +185,16 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
   void didUpdateWidget(FeedbackPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     // A recording made after the report was saved goes straight to it.
-    if (widget.recording case final recording? when oldWidget.recording == null && _saved != null) {
+    if (_sendRecording case final recording? when oldWidget.recording == null && _saved != null) {
       widget.onRemoveRecording?.call();
       unawaited(
         _addFiles(
-          [_recordingAttachment(recording)],
-          shown: _YourImage(recording.firstFrame, _strings.recordingLabel(recording.duration)),
+          [recording.toAttachment()],
+          shown: _YourImage(
+            recording.firstFrame,
+            _strings.recordingLabel(recording.duration),
+            recording: recording.apng,
+          ),
           what: _Added.recording,
         ),
       );
@@ -195,6 +216,9 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
   }
 
   void _onDescriptionChanged() {
+    if (_error == _strings.descriptionRequired && _description.text.trim().isNotEmpty) {
+      setState(() => _error = null);
+    }
     final text = _description.text.trim();
     final wanted =
         _saved == null && _assist.suggestions && _type != FeedbackType.question && text.length >= _minSuggestLength
@@ -275,6 +299,7 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
     _suggestTimer?.cancel();
     _description.dispose();
     _email.dispose();
+    _emailFocus.dispose();
     _scroll.dispose();
     _decoded?.dispose();
     super.dispose();
@@ -306,26 +331,67 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
     bytes: png,
   );
 
-  static FeedbackAttachment _recordingAttachment(SeaproofRecording recording) => FeedbackAttachment(
-    kind: AttachmentKind.recording,
-    fileName: 'recording.png',
-    contentType: 'image/apng',
-    bytes: recording.apng,
+  SeaproofRecording? get _sendRecording => _recordingForOwn ? null : widget.recording;
+
+  void _record({bool forOwnFeedback = false}) {
+    _dismissKeyboard();
+    setState(() => _recordingForOwn = forOwnFeedback);
+    widget.onRecord?.call();
+  }
+
+  static FeedbackAttachment _pastedAttachment(Uint8List png) => FeedbackAttachment(
+    kind: AttachmentKind.screenshot,
+    fileName: 'screenshot-pasted.png',
+    contentType: 'image/png',
+    bytes: png,
   );
 
-  Future<void> _startAnnotating() async {
-    final image = _pendingShot ?? _screenshot;
-    if (image == null) {
+  void _pasteScreenshot(Uint8List? bytes) {
+    if (_busy || _annotating) {
+      return;
+    }
+    setState(() {
+      _error = bytes == null ? _strings.pasteScreenshotFailed : null;
+      if (bytes != null) {
+        _pastedShot = _pastedAttachment(bytes);
+      }
+    });
+    if (bytes != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pastedPreview.currentContext case final preview?) {
+          unawaited(Scrollable.ensureVisible(preview, alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd));
+        }
+      });
+    }
+  }
+
+  Future<void> _startAnnotating({bool pasted = false, Uint8List? sentScreenshot}) async {
+    final image = sentScreenshot ?? (pasted ? _pastedShot?.bytes : _pendingShot ?? _screenshot);
+    if (image == null || _openingAnnotator) {
       return;
     }
 
-    _decoded?.dispose();
-    final codec = await ui.instantiateImageCodec(image);
-    _decoded = (await codec.getNextFrame()).image;
-    codec.dispose();
-    if (mounted) {
+    _openingAnnotator = true;
+    _dismissKeyboard();
+    try {
+      final codec = await ui.instantiateImageCodec(image);
+      final frame = await codec.getNextFrame().whenComplete(codec.dispose);
+      if (!mounted || _busy || _tab != _Tab.send || (pasted && !identical(_pastedShot?.bytes, image))) {
+        frame.image.dispose();
+        return;
+      }
+      _decoded?.dispose();
+      _decoded = frame.image;
+      _annotatingPasted = pasted;
       setState(() => _annotating = true);
+    } finally {
+      _openingAnnotator = false;
     }
+  }
+
+  void _playRecording(Uint8List apng) {
+    _dismissKeyboard();
+    setState(() => _playingRecording = apng);
   }
 
   void _finishAnnotating(Uint8List png, int hidden) {
@@ -334,7 +400,9 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
       _decoded?.dispose();
       _decoded = null;
     });
-    if (_saved == null) {
+    if (_annotatingPasted) {
+      setState(() => _pastedShot = _pastedAttachment(png));
+    } else if (_saved == null) {
       setState(() {
         _pendingShot = png;
         _pendingMarked = true;
@@ -357,9 +425,10 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
 
     final text = _description.text.trim();
     if (_saved case final saved?) {
-      if (text.isEmpty && _pendingShot == null) {
+      if (text.isEmpty && _pendingShot == null && _pastedShot == null) {
         return;
       }
+      _dismissKeyboard();
       await _addMessage(saved, text);
       return;
     }
@@ -369,23 +438,32 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
       return;
     }
 
+    _dismissKeyboard();
     await _save(text, linkedTo);
   }
 
   Future<void> _save(String description, Suggestion? linkedTo) async {
     final identified = _controller.user;
-    final email = _email.text.trim();
-    final user = identified ?? (email.isEmpty ? null : SeaproofUser(email: email));
+    final email = _reporterEmail;
+    final user = identified == null && email.isEmpty
+        ? null
+        : SeaproofUser(
+            id: identified?.id,
+            name: identified?.name,
+            userHash: identified?.userHash,
+            email: email.isEmpty ? null : email,
+          );
     final shot = _pendingShot;
-    final recording = widget.recording;
+    final pastedShot = _pastedShot;
+    final recording = _sendRecording;
     final firstLine = _lines.length;
-    _say(_YourText(description));
     if (shot != null) {
       _say(_YourImage(shot, _shotLabel));
     }
     if (recording != null) {
-      _say(_YourImage(recording.firstFrame, _strings.recordingLabel(recording.duration)));
+      _say(_YourImage(recording.firstFrame, _strings.recordingLabel(recording.duration), recording: recording.apng));
     }
+    _say(_YourText(description));
     _description.clear();
     setState(() {
       _busy = true;
@@ -401,7 +479,8 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
           linkedTo: linkedTo?.id,
           attachments: [
             if (shot != null) _shotAttachment(shot, marked: _pendingMarked),
-            if (recording != null) _recordingAttachment(recording),
+            ?pastedShot,
+            if (recording != null) recording.toAttachment(),
           ],
         ),
       );
@@ -420,7 +499,15 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
         _pendingShot = null;
         _pendingMarked = false;
         _suggestions = const [];
+        if (result.failedUploads.contains(pastedShot)) {
+          _error = _strings.addFailed;
+        } else {
+          _pastedShot = null;
+        }
       });
+      if (pastedShot != null && _pastedShot == null) {
+        setState(() => _lines.insert(firstLine, _YourImage(pastedShot.bytes, _strings.pastedScreenshot)));
+      }
       if (recording != null) {
         widget.onRemoveRecording?.call();
       }
@@ -450,15 +537,25 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
     }
 
     if (_assist.followUpQuestions) {
-      final review = await _controller.review(_type, description, conversationId: _conversationId);
-      final asked = review.questions.take(_maxQuestions).toList();
+      final review = await _controller.review(
+        _type,
+        description,
+        conversationId: _conversationId,
+        feedbackId: saved.id,
+      );
+      final asked = [
+        for (final (index, text) in review.questions.take(_maxQuestions).indexed)
+          (text: text, receipt: index < review.questionReceipts.length ? review.questionReceipts[index] : null),
+      ];
+      final first = asked.firstOrNull;
+      final recorded = mounted && first != null && await _controller.recordAssistQuestion(saved.id, first.receipt);
       if (!mounted) {
         return;
       }
-      if (asked.isNotEmpty) {
+      if (first != null && recorded) {
         _questions = asked.skip(1).toList();
         _say(
-          _AssistantLine(SeaproofStrings.fill(_strings.savedWithQuestion, number: n, question: asked.first), [
+          _AssistantLine(SeaproofStrings.fill(_strings.savedWithQuestion, number: n, question: first.text), [
             if (_type == FeedbackType.bug || _type == FeedbackType.feedback) ..._showOptions,
             _Quick.done,
           ]),
@@ -487,6 +584,8 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
 
   Future<void> _addMessage(SubmittedFeedback saved, String text) async {
     final shot = _pendingShot;
+    final pastedShot = _pastedShot;
+    var attachmentLine = _lines.length;
     if (text.isNotEmpty) {
       _say(_YourText(text));
     }
@@ -497,24 +596,45 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
       _pendingShot = null;
     });
     try {
-      if (text.isNotEmpty) {
-        await _controller.sendMessage(saved.id, text);
-      }
+      final message = text.isEmpty ? null : await _controller.sendMessage(saved.id, text);
       if (shot != null) {
-        _say(_YourImage(shot, _shotLabel));
-        await _controller.addAttachments(saved.id, [_shotAttachment(shot, marked: _pendingMarked)]);
+        if (!mounted) return;
+        setState(() => _lines.insert(attachmentLine++, _YourImage(shot, _shotLabel)));
+        await _controller.addAttachments(saved.id, [
+          _shotAttachment(shot, marked: _pendingMarked),
+        ], messageId: message?.id);
+      }
+      if (pastedShot != null) {
+        final failed = await _controller.addAttachments(saved.id, [pastedShot], messageId: message?.id);
+        if (!mounted) {
+          return;
+        }
+        if (failed.isNotEmpty) {
+          setState(() => _error = _strings.addFailed);
+          return;
+        }
+        setState(() {
+          _pastedShot = null;
+          _lines.insert(attachmentLine, _YourImage(pastedShot.bytes, _strings.pastedScreenshot));
+        });
       }
       if (!mounted) {
         return;
       }
 
-      if (text.isNotEmpty && _questions.isNotEmpty) {
-        final next = _questions.first;
-        _questions = _questions.skip(1).toList();
-        _say(_AssistantLine(next, const [_Quick.done]));
-      } else {
-        _say(_AssistantLine(SeaproofStrings.fill(_strings.addedMessage, number: saved.number), const [_Quick.done]));
+      final next = _questions.firstOrNull;
+      if (text.isNotEmpty && next != null) {
+        final recorded = await _controller.recordAssistQuestion(saved.id, next.receipt);
+        if (!mounted) {
+          return;
+        }
+        _questions = recorded ? _questions.skip(1).toList() : const [];
+        if (recorded) {
+          _say(_AssistantLine(next.text, const [_Quick.done]));
+          return;
+        }
       }
+      _say(_AssistantLine(SeaproofStrings.fill(_strings.addedMessage, number: saved.number), const [_Quick.done]));
     } on SeaproofException catch (e) {
       debugPrint('Seaproof: adding to #${saved.number} failed ($e).');
       if (mounted) {
@@ -562,18 +682,52 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
       case _Quick.mark:
         unawaited(_startAnnotating());
       case _Quick.record:
-        widget.onRecord?.call();
+        _record();
       case _Quick.done:
         setState(() => _finished = true);
         _closeTimer = Timer(const Duration(seconds: 2), widget.onClose);
     }
   }
 
+  void _dismissKeyboard() {
+    FocusScope.of(context).unfocus();
+    unawaited(_iosComposer.currentState?.dismissKeyboard());
+  }
+
+  Future<void> _toggleEmail() async {
+    if (_showEmail) {
+      _emailFocus.unfocus();
+      setState(() => _showEmail = false);
+      return;
+    }
+    await _iosComposer.currentState?.dismissKeyboard();
+    if (!mounted || _saved != null || _busy) {
+      return;
+    }
+    if (!_emailEdited) {
+      _email.text = _reporterEmail;
+    }
+    setState(() => _showEmail = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _showEmail) {
+        _emailFocus.requestFocus();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final wide = widget._isCard(context);
     final Widget content;
-    if (_annotating) {
+    if (_playingRecording case final recording?) {
+      content = ChatRecordingViewer(
+        image: MemoryImage(recording),
+        title: _strings.screenRecording,
+        back: _strings.back,
+        loadFailed: _strings.loadFailed,
+        onClose: () => setState(() => _playingRecording = null),
+      );
+    } else if (_annotating) {
       content = ScreenshotAnnotator(
         image: _decoded!,
         strings: _strings,
@@ -588,11 +742,34 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
       content = _panel(context);
     }
 
+    // The host sits above the app's Navigator, outside its Scaffold's keyboard resizing.
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: keyboardInset),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        excludeFromSemantics: true,
+        onTap: _dismissKeyboard,
+        child: LayoutBuilder(
+          builder: (context, constraints) =>
+              _surface(content, wide: wide, height: constraints.maxHeight, keyboardVisible: keyboardInset > 0),
+        ),
+      ),
+    );
+  }
+
+  Widget _surface(Widget content, {required bool wide, required double height, required bool keyboardVisible}) {
     if (!wide) {
-      return Material(child: SafeArea(child: content));
+      final reduceMotion = MediaQuery.disableAnimationsOf(context);
+      return TweenAnimationBuilder<Offset>(
+        duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 260),
+        curve: SeaproofTokens.swell,
+        tween: Tween(begin: const Offset(0, 1), end: Offset.zero),
+        builder: (context, offset, child) => FractionalTranslation(translation: offset, child: child),
+        child: Material(child: SafeArea(child: content)),
+      );
     }
 
-    final height = MediaQuery.sizeOf(context).height;
     return Stack(
       children: [
         Positioned.fill(
@@ -605,7 +782,7 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: _annotating ? 1100 : 480,
-              maxHeight: height * (_annotating ? 0.92 : 0.86),
+              maxHeight: height * (keyboardVisible ? 1 : (_annotating ? 0.92 : 0.86)),
             ),
             child: SizedBox(
               height: _finished ? null : (_annotating ? height * 0.92 : 680),
@@ -688,7 +865,12 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
                   ),
               ],
               selected: tab,
-              onSelected: (t) => setState(() => _tab = t),
+              onSelected: (t) {
+                if (_tab == _Tab.ownFeedback && t != _tab && _recordingForOwn && widget.recording != null) {
+                  widget.onRemoveRecording?.call();
+                }
+                setState(() => _tab = t);
+              },
             ),
           ),
         Expanded(
@@ -697,6 +879,11 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
               controller: _controller,
               strings: strings,
               items: _ownFeedback,
+              screenshot: _screenshot,
+              recording: _recordingForOwn ? widget.recording : null,
+              onRecord: widget.onRecord == null ? null : () => _record(forOwnFeedback: true),
+              onRemoveRecording: widget.onRemoveRecording,
+              annotationColor: widget.theme.annotationColor,
               onRead: () => setState(() {}),
             ),
             _Tab.ideas => IdeasView(
@@ -721,226 +908,266 @@ class _FeedbackPanelState extends State<FeedbackPanel> {
     final strings = _strings;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final identified = _controller.user;
     final greeting = _controller.isTesterMode ? strings.greetingTester : strings.greeting;
     final lastAssistant = _lines.whereType<_AssistantLine>().lastOrNull;
-    final dark = theme.brightness == Brightness.dark;
 
+    final extras = <Widget>[
+      if (_saved == null && _suggestions.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: SuggestionList(
+            suggestions: _suggestions,
+            voted: _voted,
+            strings: strings,
+            onLink: (s) => unawaited(_send(linkedTo: s)),
+            onVote: (s) => unawaited(_toggleVote(s)),
+          ),
+        ),
+      if (_error case final error?)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Semantics(
+            liveRegion: true,
+            child: Text(error, style: TextStyle(color: scheme.error)),
+          ),
+        ),
+      if (_pendingShot case final shot?)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: ChatAttachmentRow(
+            key: const ValueKey('seaproof-pending-screenshot'),
+            preview: Image.memory(shot, height: 40, width: 56, fit: BoxFit.cover, gaplessPlayback: true),
+            title: _shotLabel,
+            onTap: _busy ? null : _startAnnotating,
+            removeTooltip: strings.removeScreenshot,
+            removeKey: const ValueKey('seaproof-remove-screenshot'),
+            onRemove: _busy ? null : () => setState(() => _pendingShot = null),
+          ),
+        ),
+      if (_pastedShot case final image?)
+        Padding(
+          key: _pastedPreview,
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: ChatAttachmentRow(
+            key: const ValueKey('seaproof-pasted-screenshot'),
+            preview: Image.memory(image.bytes, height: 40, width: 56, fit: BoxFit.cover, gaplessPlayback: true),
+            title: strings.pastedScreenshot,
+            onTap: _busy ? null : () => _startAnnotating(pasted: true),
+            removeTooltip: strings.removeScreenshot,
+            removeKey: const ValueKey('seaproof-remove-pasted-screenshot'),
+            onRemove: _busy ? null : () => setState(() => _pastedShot = null),
+          ),
+        ),
+      if (_sendRecording case final recording? when _saved == null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: ChatAttachmentRow(
+            key: const ValueKey('seaproof-pending-recording'),
+            preview: Image.memory(
+              recording.firstFrame,
+              height: 40,
+              width: 56,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            ),
+            title: strings.recordingLabel(recording.duration),
+            leadingAction: Icons.play_arrow_outlined,
+            onTap: _busy ? null : () => _playRecording(recording.apng),
+            removeTooltip: strings.removeRecording,
+            removeKey: const ValueKey('seaproof-remove-recording'),
+            onRemove: _busy ? null : widget.onRemoveRecording,
+          ),
+        ),
+    ];
+
+    // The keyboard only changes the height available here, never which widgets are built where:
+    // moving a widget would rebuild the focused text field and close the keyboard again on iOS.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 8),
         const Divider(height: 1),
+        // The composer below is laid out first, so it always fits; the conversation and the
+        // suggestions and previews share what is left.
         Expanded(
-          child: ColoredBox(
-            color: Color.alphaBlend(
-              (dark ? scheme.surfaceContainerLowest : scheme.surfaceContainerHighest).withValues(alpha: 0.45),
-              scheme.surface,
-            ),
-            child: ListView(
-              key: const ValueKey('seaproof-conversation'),
-              controller: _scroll,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              children: [
-                _AssistantBubble(text: greeting),
-                if (_saved == null) ...[
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 34),
-                    child: _TypeChips(
-                      types: _controller.types,
-                      selected: _type,
-                      labels: strings.typeLabels,
-                      onSelected: _busy
-                          ? null
-                          : (type) {
-                              setState(() => _type = type);
-                              _refreshSuggestions();
-                            },
-                    ),
-                  ),
-                ],
-                for (final line in _lines) ...[
-                  const SizedBox(height: 10),
-                  switch (line) {
-                    _AssistantLine() => _AssistantBubble(
-                      text: line.text,
-                      actions: identical(line, lastAssistant) && !_busy
-                          ? [
-                              for (final quick in line.quickReplies)
-                                _QuickReply(
-                                  key: ValueKey('seaproof-quick-${quick.name}'),
-                                  label: switch (quick) {
-                                    _Quick.mark => strings.markOnScreen,
-                                    _Quick.record => strings.recordScreen,
-                                    _Quick.done => strings.done,
-                                  },
-                                  icon: switch (quick) {
-                                    _Quick.mark => Icons.photo_camera_outlined,
-                                    _Quick.record => Icons.videocam_outlined,
-                                    _Quick.done => null,
-                                  },
-                                  primary: quick == _Quick.done,
-                                  onPressed: () => _onQuick(quick),
-                                ),
-                            ]
-                          : const [],
-                    ),
-                    _YourText() => _YourBubble(child: Text(line.text)),
-                    _YourImage() => _YourMedia(png: line.png, label: line.label),
-                  },
-                ],
-                if (_busy) ...[const SizedBox(height: 10), const _AssistantBubble(text: '…')],
-              ],
-            ),
-          ),
-        ),
-        if (_saved == null && _suggestions.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 180),
-              child: SingleChildScrollView(
-                child: SuggestionList(
-                  suggestions: _suggestions,
-                  voted: _voted,
-                  strings: strings,
-                  onLink: (s) => unawaited(_send(linkedTo: s)),
-                  onVote: (s) => unawaited(_toggleVote(s)),
-                ),
-              ),
-            ),
-          ),
-        if (_error case final error?)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Semantics(
-              liveRegion: true,
-              child: Text(error, style: TextStyle(color: scheme.error)),
-            ),
-          ),
-        if (_pendingShot case final shot?)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: _PendingRow(
-              key: const ValueKey('seaproof-pending-screenshot'),
-              preview: Image.memory(shot, height: 40, width: 56, fit: BoxFit.cover, gaplessPlayback: true),
-              title: _shotLabel,
-              onTap: _busy ? null : _startAnnotating,
-              removeTooltip: strings.removeScreenshot,
-              removeKey: const ValueKey('seaproof-remove-screenshot'),
-              onRemove: _busy ? null : () => setState(() => _pendingShot = null),
-            ),
-          ),
-        if (widget.recording case final recording? when _saved == null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: _PendingRow(
-              key: const ValueKey('seaproof-pending-recording'),
-              preview: Image.memory(
-                recording.firstFrame,
-                height: 40,
-                width: 56,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-              ),
-              title: strings.recordingLabel(recording.duration),
-              removeTooltip: strings.removeRecording,
-              removeKey: const ValueKey('seaproof-remove-recording'),
-              onRemove: _busy ? null : widget.onRemoveRecording,
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: TextField(
-                  key: const ValueKey('seaproof-description'),
-                  controller: _description,
-                  autofocus: true,
-                  minLines: 1,
-                  maxLines: 5,
-                  maxLength: 10000,
-                  buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
-                  textCapitalization: TextCapitalization.sentences,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => unawaited(_send()),
-                  onChanged: (_) {
-                    if (_error == strings.descriptionRequired) {
-                      setState(() => _error = null);
-                    }
-                  },
-                  decoration: InputDecoration(
-                    hintText: _saved == null ? strings.descriptionHint : strings.addHint,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(22)),
-                  ),
-                ),
-              ),
-              if (_screenshot != null)
-                IconButton(
-                  key: const ValueKey('seaproof-mark'),
-                  icon: const Icon(Icons.photo_camera_outlined),
-                  tooltip: strings.markOnScreen,
-                  onPressed: _busy ? null : _startAnnotating,
-                ),
-              if (widget.onRecord case final onRecord?)
-                IconButton(
-                  key: const ValueKey('seaproof-record'),
-                  icon: const Icon(Icons.videocam_outlined),
-                  tooltip: strings.recordScreen,
-                  onPressed: _busy ? null : onRecord,
-                ),
-              IconButton.filled(
-                key: const ValueKey('seaproof-send'),
-                icon: const Icon(Icons.arrow_upward),
-                tooltip: _busy ? strings.sending : strings.send,
-                onPressed: _busy ? null : () => unawaited(_send()),
-              ),
-            ],
-          ),
-        ),
-        if (_saved == null && identified == null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Column(
+          child: LayoutBuilder(
+            builder: (context, constraints) => Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                TextField(
-                  key: const ValueKey('seaproof-email'),
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  autofillHints: const [AutofillHints.email],
-                  decoration: InputDecoration(labelText: strings.emailLabel, isDense: true),
-                  onChanged: (_) => setState(() {}),
-                ),
-                if (!_controller.isTesterMode && _email.text.trim().isNotEmpty)
-                  CheckboxListTile(
-                    key: const ValueKey('seaproof-may-contact'),
-                    value: _mayContact,
-                    onChanged: (v) => setState(() => _mayContact = v ?? false),
-                    title: Text(strings.mayContact),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
+                Expanded(
+                  child: ChatHistory(
+                    key: const ValueKey('seaproof-conversation'),
+                    controller: _scroll,
+                    children: [
+                      ChatIncomingBubble(text: greeting),
+                      if (_saved == null) ...[
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 34),
+                          child: _TypeChips(
+                            types: _controller.types,
+                            selected: _type,
+                            labels: strings.typeLabels,
+                            onSelected: _busy
+                                ? null
+                                : (type) {
+                                    setState(() => _type = type);
+                                    _refreshSuggestions();
+                                  },
+                          ),
+                        ),
+                      ],
+                      for (final line in _lines) ...[
+                        const SizedBox(height: 10),
+                        switch (line) {
+                          _AssistantLine() => ChatIncomingBubble(
+                            text: line.text,
+                            actions: identical(line, lastAssistant) && !_busy
+                                ? [
+                                    for (final quick in line.quickReplies)
+                                      _QuickReply(
+                                        key: ValueKey('seaproof-quick-${quick.name}'),
+                                        label: switch (quick) {
+                                          _Quick.mark => strings.markOnScreen,
+                                          _Quick.record => strings.recordScreen,
+                                          _Quick.done => strings.closeChat,
+                                        },
+                                        icon: switch (quick) {
+                                          _Quick.mark => Icons.photo_camera_outlined,
+                                          _Quick.record => Icons.videocam_outlined,
+                                          _Quick.done => null,
+                                        },
+                                        primary: quick == _Quick.done,
+                                        onPressed: () => _onQuick(quick),
+                                      ),
+                                  ]
+                                : const [],
+                          ),
+                          _YourText() => ChatOutgoingBubble(child: Text(line.text)),
+                          _YourImage() => ChatImageBubble(
+                            image: MemoryImage(line.png),
+                            label: line.label,
+                            onTap: _busy
+                                ? null
+                                : () {
+                                    if (line.recording case final recording?) {
+                                      _playRecording(recording);
+                                    } else {
+                                      unawaited(_startAnnotating(sentScreenshot: line.png));
+                                    }
+                                  },
+                          ),
+                        },
+                      ],
+                      if (_busy) ...[const SizedBox(height: 10), const ChatIncomingBubble(text: '…')],
+                    ],
                   ),
+                ),
+                ConstrainedBox(
+                  key: const ValueKey('seaproof-extras'),
+                  constraints: BoxConstraints(maxHeight: constraints.maxHeight * _extrasShare),
+                  child: SingleChildScrollView(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: extras),
+                  ),
+                ),
               ],
             ),
           ),
-        if (_saved == null && identified?.email != null && !_controller.isTesterMode)
-          CheckboxListTile(
-            key: const ValueKey('seaproof-may-contact'),
-            value: _mayContact,
-            onChanged: (v) => setState(() => _mayContact = v ?? false),
-            title: Text(strings.mayContact),
-            controlAffinity: ListTileControlAffinity.leading,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-            dense: true,
+        ),
+        _composer(),
+      ],
+    );
+  }
+
+  Widget _composer() {
+    final strings = _strings;
+    final hasEmail = _reporterEmail.isNotEmpty;
+    final hint = _saved == null ? strings.descriptionHint : strings.addHint;
+    final native = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    const descriptionKey = ValueKey('seaproof-description');
+
+    return ChatComposer(
+      key: const ValueKey('seaproof-composer'),
+      editor: native
+          ? KeyedSubtree(
+              key: descriptionKey,
+              child: IosComposer(
+                key: _iosComposer,
+                controller: _description,
+                hint: hint,
+                onImage: _pasteScreenshot,
+                enabled: !_busy,
+                onFocus: _emailFocus.unfocus,
+              ),
+            )
+          : ChatTextField(
+              fieldKey: descriptionKey,
+              controller: _description,
+              hint: hint,
+              maxLength: 10000,
+              autofocus: true,
+              onSubmit: () => unawaited(_send()),
+            ),
+      details: _saved == null && _showEmail
+          ? Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    key: const ValueKey('seaproof-email'),
+                    focusNode: _emailFocus,
+                    controller: _email,
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.done,
+                    autofillHints: const [AutofillHints.email],
+                    decoration: InputDecoration(labelText: strings.emailLabel, isDense: true),
+                    onChanged: (_) => setState(() => _emailEdited = true),
+                  ),
+                  if (!_controller.isTesterMode && hasEmail)
+                    CheckboxListTile(
+                      key: const ValueKey('seaproof-may-contact'),
+                      value: _mayContact,
+                      onChanged: (v) => setState(() => _mayContact = v ?? false),
+                      title: Text(strings.mayContact),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                ],
+              ),
+            )
+          : null,
+      actions: [
+        if (_screenshot != null)
+          IconButton(
+            key: const ValueKey('seaproof-mark'),
+            icon: const Icon(Icons.photo_camera_outlined),
+            tooltip: strings.markOnScreen,
+            onPressed: _busy ? null : _startAnnotating,
+          ),
+        if (widget.onRecord != null)
+          IconButton(
+            key: const ValueKey('seaproof-record'),
+            icon: const Icon(Icons.videocam_outlined),
+            tooltip: strings.recordScreen,
+            onPressed: _busy ? null : _record,
+          ),
+        if (_saved == null)
+          IconButton(
+            key: const ValueKey('seaproof-toggle-email'),
+            isSelected: _showEmail || hasEmail,
+            icon: Badge(isLabelVisible: hasEmail, child: const Icon(Icons.alternate_email)),
+            tooltip: hasEmail ? strings.editEmail : strings.addEmail,
+            onPressed: _busy ? null : _toggleEmail,
           ),
       ],
+      send: IconButton.filled(
+        key: const ValueKey('seaproof-send'),
+        icon: const Icon(Icons.arrow_upward),
+        tooltip: _busy ? strings.sending : strings.send,
+        onPressed: _busy ? null : () => unawaited(_send()),
+      ),
     );
   }
 }
@@ -976,130 +1203,6 @@ class _TestStrip extends StatelessWidget {
       ),
     ),
   );
-}
-
-class _AssistantBubble extends StatelessWidget {
-  const _AssistantBubble({required this.text, this.actions = const []});
-
-  final String text;
-  final List<Widget> actions;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 26,
-              height: 26,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(color: scheme.surfaceContainerHighest, shape: BoxShape.circle),
-              child: Icon(Icons.auto_awesome_outlined, size: 14, color: scheme.primary),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: scheme.surface,
-                  border: Border.all(color: scheme.outlineVariant),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(4),
-                    topRight: Radius.circular(16),
-                    bottomLeft: Radius.circular(16),
-                    bottomRight: Radius.circular(16),
-                  ),
-                ),
-                child: Text(text),
-              ),
-            ),
-            const SizedBox(width: 32),
-          ],
-        ),
-        if (actions.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 34, top: 8),
-            child: Wrap(spacing: 6, runSpacing: 6, children: actions),
-          ),
-      ],
-    );
-  }
-}
-
-class _YourBubble extends StatelessWidget {
-  const _YourBubble({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Padding(
-        padding: const EdgeInsets.only(left: 48),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: scheme.primary,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(16),
-              topRight: Radius.circular(4),
-              bottomLeft: Radius.circular(16),
-              bottomRight: Radius.circular(16),
-            ),
-          ),
-          child: DefaultTextStyle.merge(
-            style: TextStyle(color: scheme.onPrimary),
-            child: child,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _YourMedia extends StatelessWidget {
-  const _YourMedia({required this.png, required this.label});
-
-  final Uint8List png;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Container(
-        width: 200,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          border: Border.all(color: theme.colorScheme.outlineVariant),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(4),
-            bottomLeft: Radius.circular(16),
-            bottomRight: Radius.circular(16),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Image.memory(png, height: 140, fit: BoxFit.cover, gaplessPlayback: true, excludeFromSemantics: true),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
-              child: Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _QuickReply extends StatelessWidget {
@@ -1140,54 +1243,6 @@ class _QuickReply extends StatelessWidget {
             label: child,
           );
   }
-}
-
-/// What waits in the composer to go out with the next message.
-class _PendingRow extends StatelessWidget {
-  const _PendingRow({
-    super.key,
-    required this.preview,
-    required this.title,
-    required this.removeTooltip,
-    required this.removeKey,
-    required this.onRemove,
-    this.onTap,
-  });
-
-  final Widget preview;
-  final String title;
-  final String removeTooltip;
-  final Key removeKey;
-  final VoidCallback? onRemove;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
-      child: Row(
-        children: [
-          InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(8),
-            child: ClipRRect(borderRadius: BorderRadius.circular(8), child: preview),
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: Text(title, style: Theme.of(context).textTheme.labelLarge)),
-          IconButton(
-            key: removeKey,
-            icon: const Icon(Icons.close, size: 18),
-            tooltip: removeTooltip,
-            onPressed: onRemove,
-          ),
-        ],
-      ),
-    ),
-  );
 }
 
 /// A segmented control: a sunken track with the selected tab raised on it.

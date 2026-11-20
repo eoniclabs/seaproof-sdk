@@ -1,5 +1,5 @@
 import { Diagnostics, type OwnFeedback, type PublicIdea, type SeaproofClient } from "@seaproof/core";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FeedbackWidget, SeaproofProvider, useSeaproof } from "../src";
 
@@ -415,15 +415,27 @@ describe("screen recording", () => {
 
   it("saves first, then asks Assist's questions one at a time and adds the answers", async () => {
     const submit = vi.fn<SeaproofClient["submit"]>(async () => ({ id: "f1", number: 8 }));
-    const review = vi.fn<SeaproofClient["review"]>(async () => ({
-      questions: ["What did you expect to happen?", "Which page were you on?"],
-      limited: false,
-    }));
+    const questions = [
+      "What did you expect to happen?",
+      "Which page were you on?",
+      "How did you get there?",
+      "What did the button do instead?",
+      "Does it happen every time?",
+      "Did you see an error message?",
+    ];
+    const questionReceipts = questions.map((_, i) => `receipt-${i}`);
+    const review = vi.fn<SeaproofClient["review"]>(async () => ({ questions, questionReceipts, limited: false }));
+    const recordAssistQuestion = vi.fn(async (_id: string, _receipt: string) => true);
     const sendMessage = vi.fn(async (_id: string, body: string) => ({ id: "m1", from: "you" as const, body, createdAt: "" }));
     render(
       <SeaproofProvider
         apiKey="sp_test"
-        client={fakeClient(submit, true, { assistSettings: async () => ({ suggestions: false, followUpQuestions: true }), review, sendMessage })}
+        client={fakeClient(submit, true, {
+          assistSettings: async () => ({ suggestions: false, followUpQuestions: true }),
+          review,
+          recordAssistQuestion,
+          sendMessage,
+        })}
       >
         <FeedbackWidget screenshot={false} />
       </SeaproofProvider>,
@@ -435,14 +447,55 @@ describe("screen recording", () => {
 
     expect(await screen.findByText("Thanks, it is saved as #8. What did you expect to happen?")).toBeTruthy();
     expect(submit).toHaveBeenCalledOnce();
-    expect(review).toHaveBeenCalledWith("bug", "The button does nothing", expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4/));
+    expect(review).toHaveBeenCalledWith("bug", "The button does nothing", expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4/), "f1");
+    expect(recordAssistQuestion.mock.calls).toEqual([["f1", questionReceipts[0]]]);
 
-    write("Add to your report", "To go to checkout");
-    expect(await screen.findByText("Which page were you on?")).toBeTruthy();
-    write("Add to your report", "The cart");
+    const answers = ["To go to checkout", "The cart", "I added a product", "Nothing", "Yes"];
+    for (const [index, answer] of answers.entries()) {
+      write("Add to your report", answer);
+      if (index + 1 < answers.length) {
+        expect(await screen.findByText(questions[index + 1]!)).toBeTruthy();
+        expect(screen.queryByText(questions[index + 2]!)).toBeNull();
+      }
+    }
     expect(await screen.findByText("Added to #8.")).toBeTruthy();
-    expect(sendMessage.mock.calls.map((c) => c[1])).toEqual(["To go to checkout", "The cart"]);
+    expect(screen.queryByText(questions[5]!)).toBeNull();
+    expect(sendMessage.mock.calls.map((c) => c[1])).toEqual(answers);
+    expect(recordAssistQuestion.mock.calls).toEqual(questionReceipts.slice(0, 5).map((receipt) => ["f1", receipt]));
+    for (let index = 0; index < answers.length - 1; index++) {
+      expect(sendMessage.mock.invocationCallOrder[index]!).toBeLessThan(recordAssistQuestion.mock.invocationCallOrder[index + 1]!);
+    }
     expect(review).toHaveBeenCalledOnce();
+  });
+
+  it("ignores an Assist review that finishes after the reporter closes the conversation", async () => {
+    type Result = Awaited<ReturnType<SeaproofClient["review"]>>;
+    let finishReview!: (result: Result) => void;
+    const pendingReview = new Promise<Result>((resolve) => { finishReview = resolve; });
+    const review = vi.fn(() => pendingReview);
+    const recordAssistQuestion = vi.fn(async () => true);
+    setup({ screenshot: false }, {
+      assistSettings: async () => ({ suggestions: false, followUpQuestions: true }),
+      review,
+      recordAssistQuestion,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Feedback" }));
+    await act(async () => {});
+    write("What happened?", "The first report");
+    await waitFor(() => expect(review).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Feedback" }));
+    await act(async () => finishReview({
+      questions: ["Where did that happen?"],
+      questionReceipts: ["receipt"],
+      limited: false,
+    }));
+
+    expect(screen.queryByText(/Where did that happen/)).toBeNull();
+    expect(recordAssistQuestion).not.toHaveBeenCalled();
+    expect((screen.getByRole("textbox", { name: "What happened?" }) as HTMLTextAreaElement).disabled).toBe(false);
   });
 
   it("still saves the report when Assist has nothing to ask or the quota is used up", async () => {

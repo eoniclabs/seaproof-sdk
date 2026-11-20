@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'apng.dart';
+import 'models.dart';
 
 /// A finished recording of the app: an animated PNG that plays in the Seaproof inbox.
 @immutable
@@ -18,6 +19,14 @@ final class SeaproofRecording {
 
   /// The first frame as PNG, for a preview.
   final Uint8List firstFrame;
+
+  /// The file sent with a report or follow-up.
+  FeedbackAttachment toAttachment() => FeedbackAttachment(
+    kind: AttachmentKind.recording,
+    fileName: 'recording.png',
+    contentType: 'image/apng',
+    bytes: apng,
+  );
 }
 
 /// Records the app by capturing frames, with the same masking as screenshots.

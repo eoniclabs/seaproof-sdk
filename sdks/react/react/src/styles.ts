@@ -53,6 +53,14 @@ export const css = `
 :where(.seaproof-launcher){position:fixed;right:20px;bottom:20px;z-index:var(--_z);display:inline-flex;align-items:center;gap:8px;min-height:44px;
   border:0;border-radius:999px;padding:0 18px 0 14px;background:var(--_primary);color:var(--_on-primary);font:600 14px/1 var(--_font);
   box-shadow:0 4px 12px rgba(6,32,47,.18),0 1px 3px rgba(6,32,47,.08);cursor:pointer;transition:transform .2s var(--_ease),filter .2s var(--_ease)}
+:where(.seaproof-launcher[data-position$="-left"]){left:20px;right:auto}
+:where(.seaproof-launcher[data-position^="top-"]){top:20px;bottom:auto}
+:where(.seaproof-launcher[data-position^="middle-"]){top:50%;bottom:auto;translate:0 -50%}
+:where(.seaproof-launcher){max-width:calc(100vw - 40px);max-height:calc(100dvh - 40px)}
+:where(.seaproof-launcher-label){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:where(.seaproof-launcher[data-orientation="vertical"]){flex-direction:column;min-width:44px;padding:14px 0}
+:where(.seaproof-launcher[data-orientation="vertical"] .seaproof-launcher-label){writing-mode:vertical-rl}
+:where(.seaproof-launcher[data-orientation="vertical"] .seaproof-launcher-tag){margin:0}
 :where(.seaproof-launcher:hover){filter:brightness(1.15);transform:translateY(-1px)}
 :where(.seaproof-launcher-tag){font:600 11px/1 var(--_mono);letter-spacing:.06em;background:#ffe8d9;color:#8a3306;border-radius:999px;padding:4px 8px;margin-right:-8px}
 :where(.seaproof-launcher-dot){position:absolute;top:-2px;right:-2px;width:14px;height:14px;border-radius:999px;background:var(--_signal);border:2px solid var(--_surface)}

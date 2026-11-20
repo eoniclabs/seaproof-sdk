@@ -24,6 +24,9 @@ final class FakeApi {
   /// Returned as whoami's branding.
   Map<String, Object?>? branding;
 
+  /// Returned as whoami's launcher settings.
+  Map<String, Object?>? launcher;
+
   /// Returned by GET /branding/logo.
   List<int>? logo;
 
@@ -35,6 +38,7 @@ final class FakeApi {
 
   /// Returned by POST /assist/review.
   List<String> questions = [];
+  List<String>? questionReceipts;
 
   /// Make vote calls fail.
   bool failVotes = false;
@@ -52,7 +56,9 @@ final class FakeApi {
   /// Bodies of POST /me/feedback/{id}/attachments, in order.
   List<Map<String, Object?>> get addedAttachments => [
     for (final r in requests)
-      if (r.method == 'POST' && r.url.path.startsWith('/api/v1/sdk/me/feedback/') && r.url.path.endsWith('/attachments'))
+      if (r.method == 'POST' &&
+          r.url.path.startsWith('/api/v1/sdk/me/feedback/') &&
+          r.url.path.endsWith('/attachments'))
         jsonDecode(r.body) as Map<String, Object?>,
   ];
 
@@ -103,7 +109,12 @@ final class FakeApi {
       ('GET', '/api/v1/sdk/ideas') => _json(200, ideas),
       ('GET', '/api/v1/sdk/assist') => _json(200, assist),
       ('POST', '/api/v1/sdk/assist/suggestions') => _json(200, suggestions),
-      ('POST', '/api/v1/sdk/assist/review') => _json(200, {'questions': questions, 'limited': false}),
+      ('POST', '/api/v1/sdk/assist/review') => _json(200, {
+        'questions': questions,
+        'questionReceipts': questionReceipts,
+        'limited': false,
+      }),
+      ('POST', '/api/v1/sdk/assist/questions/shown') => http.Response('', 204),
       ('PUT' || 'DELETE', final p) when p.endsWith('/vote') =>
         failVotes ? _json(503, {'code': 'http.503', 'title': 'Unavailable.'}) : http.Response('', 204),
       ('GET', '/api/v1/sdk/whoami') => _json(200, {
@@ -118,6 +129,7 @@ final class FakeApi {
           'environmentName': environment == 'production' ? 'Production' : 'QA',
         },
         'branding': branding ?? {'primaryColor': null, 'logo': null},
+        'launcher': ?launcher,
       }),
       ('GET', '/api/v1/sdk/branding/logo') => switch (logo) {
         final bytes? => http.Response.bytes(bytes, 200, headers: {'content-type': 'image/png'}),

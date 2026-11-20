@@ -14,6 +14,11 @@ Create a project and an API key in the [Seaproof admin](https://app.seaproof.io)
 [quickstart](https://seaproof.io/docs/quickstart.md) walks through
 the whole setup.
 
+> **Beta.** While Seaproof is in beta, apps report to a test deployment rather than
+> https://api.seaproof.io. Pass its address as `endpoint`, for example
+> `SeaproofConfig(apiKey: ..., endpoint: Uri.parse(const String.fromEnvironment('SEAPROOF_ENDPOINT')))`.
+> The admin's install steps and the MCP tool `get_sdk_setup` show the right address.
+
 ## Set up
 
 Create an API key under **Projects → API keys** in the Seaproof admin. Make one key for each
@@ -48,6 +53,10 @@ flutter run --dart-define=SEAPROOF_KEY=sp_... --dart-define=SEAPROOF_COMMIT=$(gi
 `SEAPROOF_COMMIT` is optional and links every report to the build it came from. With a test
 key, shake the device (or press the floating button on desktop) to send a report. Step-by-step
 guide: [Flutter](https://seaproof.io/docs/flutter.md); a runnable app is in `example/`.
+
+On iPhone and iPad, use **Paste** in the message field to attach a copied image. Tap the
+attachment row to mark up the screenshot or use its remove button to discard it before sending.
+Use **@** below the message field to see or add an optional e-mail address.
 
 `SeaproofHost` belongs in `MaterialApp.builder`, which places it inside your theme and
 localizations. It also works with `MaterialApp.router`.
@@ -196,7 +205,7 @@ When the team turns Assist on in the admin, the panel helps with no code changes
   for me" sends the report linked to the known one (`FeedbackDraft.linkedTo`); ideas can be
   voted for there. Only the title and summary the team made public are shown.
 - **Follow-up questions:** after the report is saved, an AI model asks what it is missing, one
-  question at a time and at most two. The answers are added to the report. A failing model
+  question at a time and at most five. The answers are added to the report. A failing model
   never stops a report.
 
 `controller.addAttachments(id, files)` adds files to a report the user already sent.
@@ -247,6 +256,17 @@ A colour and logo set under **Branding** in the Seaproof admin reach the app wit
 The colour is used only when neither `SeaproofTheme` sets a `primaryColor`, and then with black
 or white text, whichever reads better. The logo appears at the top of the panel. Turn both off
 with `SeaproofConfig(useProjectBranding: false)`.
+
+### Feedback button placement
+
+In **Project Settings → Feedback button**, choose the built-in button's position, text and
+orientation. The SDK applies settings on startup. With the default settings, the icon button
+can still be dragged.
+
+When **Avoid covering other controls** is on, pass a `ValueListenable<List<Rect>>` as
+`SeaproofHost.launcherObstructions`. Publish the bounds of the controls in the host's
+coordinate space whenever they appear, move or disappear. The launcher returns to its
+preferred position as soon as the space is free.
 
 ## Language
 

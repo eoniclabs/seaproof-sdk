@@ -17,6 +17,18 @@ describe("createSeaproof", () => {
     expect(() => createSeaproof({ apiKey: "secret" })).toThrow(/sp_/);
   });
 
+  it("reads the project's launcher independently of its branding", async () => {
+    const launcher = { position: "middle-left", label: "Report a bug", orientation: "vertical", avoidObstructions: true };
+    const fetch = vi.fn(async () => json(200, {
+      projectId: "p1", projectName: "Shop", mode: "test", launcher,
+    }));
+    const client = createSeaproof({ apiKey, branding: false, fetch: fetch as unknown as typeof globalThis.fetch });
+
+    expect(client.launcher).toBeUndefined();
+    await client.start();
+    expect(client.launcher).toEqual(launcher);
+  });
+
   it("submits feedback, uploads each file to its presigned URL and marks it uploaded", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const fetch = vi.fn(async (url: string, init: RequestInit) => {

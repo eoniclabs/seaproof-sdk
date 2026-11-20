@@ -64,8 +64,10 @@ void main() {
     expect(entry['method'], 'POST');
     expect(entry['url'], 'https://shop.test/orders?coupon=*');
     expect(entry['status'], 201);
-    expect(entry.toString(), isNot(contains('4111')));
-    expect(entry.toString(), isNot(contains('SECRET')));
+    // Leave out the timestamp: its microseconds can contain any digits, such as 4111.
+    final recorded = (Map.of(entry)..remove('t')).toString();
+    expect(recorded, isNot(contains('4111')));
+    expect(recorded, isNot(contains('SECRET')));
   });
 
   test("the SDK's own calls are not recorded", () {

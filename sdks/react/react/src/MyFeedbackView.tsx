@@ -1,8 +1,31 @@
-import type { OwnFeedback, OwnFeedbackDetail } from "@seaproof/core";
-import { useEffect, useState, type FormEvent } from "react";
+import type { OwnFeedback, OwnFeedbackDetail, PublicStatus, ReporterAttachment } from "@seaproof/core";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 import { statusLabels } from "./labels";
 import { ChevronLeftIcon, SendIcon } from "./icons";
 import { useSeaproof } from "./SeaproofProvider";
+
+const statusUpdateText: Record<PublicStatus, string> = {
+  received: "Your report was reopened.",
+  underReview: "The team is reviewing your report.",
+  inProgress: "The team is working on your report.",
+  done: "The team marked your report as resolved.",
+  closed: "The team closed your report.",
+};
+
+function attachmentRow(file: ReporterAttachment) {
+  return (
+    <li className="seaproof-message seaproof-from-you" key={file.id}>
+      <a href={file.url} target="_blank" rel="noreferrer">
+        <img
+          src={file.url}
+          alt={file.kind === "recording" ? "Screen recording" : "Screenshot"}
+          loading="lazy"
+          style={{ maxWidth: "100%", maxHeight: 160 }}
+        />
+      </a>
+    </li>
+  );
+}
 
 /** The user's own feedback, and the conversation with the team on each. */
 export function MyFeedbackView({ items, onChanged }: { items: OwnFeedback[]; onChanged: () => void }) {
@@ -72,6 +95,36 @@ function Conversation({ id, onBack }: { id: string; onBack: () => void }) {
     }
   }
 
+  const attachments = detail?.attachments ?? [];
+  const initial = attachments.filter((file) => !file.messageId && file.createdAt === detail?.createdAt);
+  const timeline = [
+    ...(detail?.messages ?? []).map((message) => ({
+      createdAt: message.createdAt,
+      row: (
+        <Fragment key={message.id}>
+          {attachments.filter((file) => file.messageId === message.id).map(attachmentRow)}
+          <li className={`seaproof-message seaproof-from-${message.from}`}>
+            <span className="seaproof-sender">{message.from === "team" ? "Team" : "You"}</span>
+            <span className="seaproof-bubble">{message.body}</span>
+          </li>
+        </Fragment>
+      ),
+    })),
+    ...(detail?.statusUpdates ?? []).map((update) => ({
+      createdAt: update.createdAt,
+      row: (
+        <li className="seaproof-message seaproof-from-team" key={update.id}>
+          <span className="seaproof-sender">Team</span>
+          <span className="seaproof-bubble">{statusUpdateText[update.status]}</span>
+        </li>
+      ),
+    })),
+    ...attachments.filter((file) => !file.messageId && file.createdAt !== detail?.createdAt).map((file) => ({
+      createdAt: file.createdAt,
+      row: attachmentRow(file),
+    })),
+  ].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+
   return (
     <form className="seaproof-view" onSubmit={send} style={{ paddingBottom: 16 }}>
       <button type="button" className="seaproof-link" style={{ alignSelf: "flex-start" }} onClick={onBack}>
@@ -85,15 +138,11 @@ function Conversation({ id, onBack }: { id: string; onBack: () => void }) {
             {statusLabels[detail.status]}
           </span>
           <ol className="seaproof-messages">
+            {initial.map(attachmentRow)}
             <li className="seaproof-message seaproof-from-you">
               <span className="seaproof-bubble">{detail.description}</span>
             </li>
-            {detail.messages.map((m) => (
-              <li key={m.id} className={`seaproof-message seaproof-from-${m.from}`}>
-                <span className="seaproof-sender">{m.from === "team" ? "Team" : "You"}</span>
-                <span className="seaproof-bubble">{m.body}</span>
-              </li>
-            ))}
+            {timeline.map(({ row }) => row)}
           </ol>
           <div className="seaproof-reply">
             <label className="seaproof-visually-hidden" htmlFor={`seaproof-reply-${id}`}>

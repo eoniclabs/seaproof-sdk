@@ -1,6 +1,6 @@
 {
   "name": "@seaproof/core",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "description": "Seaproof client for any web app: send bug reports, feedback and ideas with screenshots, diagnostics and screen recordings.",
   "license": "MIT",
   "homepage": "https://seaproof.io",

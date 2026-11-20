@@ -1,9 +1,17 @@
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../controller.dart';
 import '../design.dart';
 import '../models.dart';
+import '../screen_recorder.dart';
 import '../strings.dart';
+import 'annotator.dart';
+import 'chat.dart';
+import 'ios_composer.dart';
 
 /// The user's own feedback, and the conversation with the team about one item.
 class OwnFeedbackView extends StatefulWidget {
@@ -14,6 +22,11 @@ class OwnFeedbackView extends StatefulWidget {
     required this.strings,
     required this.items,
     required this.onRead,
+    this.screenshot,
+    this.recording,
+    this.onRecord,
+    this.onRemoveRecording,
+    this.annotationColor,
   });
 
   /// The SDK state.
@@ -28,14 +41,36 @@ class OwnFeedbackView extends StatefulWidget {
   /// Called after an item's replies were read, so unread markers can update.
   final VoidCallback onRead;
 
+  /// The masked screenshot captured when the feedback panel opened.
+  final Uint8List? screenshot;
+
+  /// A newly captured recording waiting to be sent to this item.
+  final SeaproofRecording? recording;
+
+  /// Starts recording the app, if available to the reporter.
+  final VoidCallback? onRecord;
+
+  /// Clears the newly captured recording.
+  final VoidCallback? onRemoveRecording;
+
+  /// Brand color for screenshot annotations.
+  final Color? annotationColor;
+
   @override
   State<OwnFeedbackView> createState() => _OwnFeedbackViewState();
 }
 
 class _OwnFeedbackViewState extends State<OwnFeedbackView> {
   final TextEditingController _reply = TextEditingController();
+  final ScrollController _history = ScrollController();
+  final GlobalKey<IosComposerState> _iosComposer = GlobalKey();
+  final List<FeedbackAttachment> _draft = [];
+  ui.Image? _photo;
+  ImageProvider<Object>? _playing;
+  bool _openingAttachment = false;
   OwnFeedback? _open;
   OwnFeedbackDetail? _detail;
+  String? _attachmentRetryMessageId;
   bool _loading = false;
   bool _sending = false;
   String? _error;
@@ -45,13 +80,18 @@ class _OwnFeedbackViewState extends State<OwnFeedbackView> {
   @override
   void dispose() {
     _reply.dispose();
+    _history.dispose();
+    _photo?.dispose();
     super.dispose();
   }
 
   Future<void> _openItem(OwnFeedback item) async {
+    _reply.clear();
+    _draft.clear();
     setState(() {
       _open = item;
       _detail = null;
+      _attachmentRetryMessageId = null;
       _loading = true;
       _error = null;
     });
@@ -65,47 +105,192 @@ class _OwnFeedbackViewState extends State<OwnFeedbackView> {
       widget.onRead();
     } on SeaproofException catch (e) {
       debugPrint('Seaproof: could not load feedback ${item.id} ($e).');
-      if (mounted) {
+      if (mounted && _open == item) {
         setState(() => _error = _strings.loadFailed);
       }
     } finally {
-      if (mounted) {
+      if (mounted && _open == item) {
         setState(() => _loading = false);
       }
     }
   }
 
+  void _dismissKeyboard() {
+    FocusScope.of(context).unfocus();
+    unawaited(_iosComposer.currentState?.dismissKeyboard());
+  }
+
+  FeedbackAttachment _screenshot(Uint8List bytes, {bool marked = false}) => FeedbackAttachment(
+    kind: AttachmentKind.screenshot,
+    fileName: marked ? 'screenshot-marked.png' : 'screenshot.png',
+    contentType: 'image/png',
+    bytes: bytes,
+  );
+
+  void _paste(Uint8List? bytes) {
+    if (_sending) return;
+    setState(() {
+      if (bytes == null) {
+        _error = _strings.pasteScreenshotFailed;
+      } else {
+        _error = null;
+        _draft.add(_screenshot(bytes));
+      }
+    });
+  }
+
+  void _closeImage() {
+    final photo = _photo;
+    setState(() {
+      _photo = null;
+      _playing = null;
+      _editingDraft = null;
+    });
+    if (photo != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => photo.dispose());
+    }
+  }
+
+  FeedbackAttachment? _editingDraft;
+
+  Future<void> _openScreenshot(ImageProvider<Object> source, {FeedbackAttachment? draft}) async {
+    if (_sending || _openingAttachment) return;
+    _dismissKeyboard();
+    final item = _open;
+    setState(() {
+      _openingAttachment = true;
+      _error = null;
+    });
+    final stream = source.resolve(createLocalImageConfiguration(context));
+    final loaded = Completer<ui.Image>();
+    final listener = ImageStreamListener(
+      (info, _) {
+        if (!loaded.isCompleted) loaded.complete(info.image.clone());
+        info.dispose();
+      },
+      onError: (error, stack) {
+        if (!loaded.isCompleted) loaded.completeError(error, stack);
+      },
+    );
+    stream.addListener(listener);
+    try {
+      final photo = await loaded.future;
+      if (!mounted || _open != item) {
+        photo.dispose();
+        return;
+      }
+      setState(() {
+        _photo = photo;
+        _editingDraft = draft;
+      });
+    } on Object {
+      if (mounted && _open == item) setState(() => _error = _strings.loadFailed);
+    } finally {
+      stream.removeListener(listener);
+      if (mounted) setState(() => _openingAttachment = false);
+    }
+  }
+
+  void _applyScreenshot(Uint8List bytes, int _) {
+    final original = _editingDraft;
+    final marked = _screenshot(bytes, marked: true);
+    setState(() {
+      final index = original == null ? -1 : _draft.indexOf(original);
+      if (index < 0) {
+        _draft.add(marked);
+      } else {
+        _draft[index] = marked;
+      }
+    });
+    _closeImage();
+  }
+
+  void _playRecording(ImageProvider<Object> source) {
+    _dismissKeyboard();
+    setState(() => _playing = source);
+  }
+
   Future<void> _send() async {
     final body = _reply.text.trim();
     final detail = _detail;
-    if (body.isEmpty || detail == null) {
-      return;
-    }
+    final recording = widget.recording?.toAttachment();
+    final files = [..._draft, ?recording];
+    if (_sending || _openingAttachment || detail == null || (body.isEmpty && files.isEmpty)) return;
 
+    _dismissKeyboard();
     setState(() {
       _sending = true;
       _error = null;
     });
     try {
-      final message = await widget.controller.sendMessage(detail.id, body);
-      if (mounted) {
+      var messageId = _attachmentRetryMessageId;
+      if (body.isNotEmpty) {
+        final message = await widget.controller.sendMessage(detail.id, body);
+        if (!mounted) return;
+        messageId = message.id;
         _reply.clear();
         setState(() => _detail = detail.withMessage(message));
       }
+      if (files.isNotEmpty) {
+        _attachmentRetryMessageId = messageId;
+        final failed = await widget.controller.addAttachments(detail.id, files, messageId: messageId);
+        if (!mounted) return;
+        setState(() {
+          _draft.removeWhere((file) => files.contains(file) && !failed.contains(file));
+          if (failed.isNotEmpty) _error = _strings.addFailed;
+          if (failed.isEmpty) _attachmentRetryMessageId = null;
+        });
+        if (recording != null && !failed.contains(recording)) widget.onRemoveRecording?.call();
+
+        if (failed.length < files.length) {
+          final updated = await widget.controller.myFeedbackItem(detail.id);
+          if (!mounted) return;
+          setState(() => _detail = updated);
+          widget.onRead();
+        }
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_history.hasClients) {
+          unawaited(
+            _history.animateTo(
+              _history.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 200),
+              curve: SeaproofTokens.tide,
+            ),
+          );
+        }
+      });
     } on SeaproofException catch (e) {
       debugPrint('Seaproof: could not send the answer ($e).');
-      if (mounted) {
-        setState(() => _error = _strings.failed);
-      }
+      if (mounted) setState(() => _error = _strings.failed);
     } finally {
-      if (mounted) {
-        setState(() => _sending = false);
-      }
+      if (mounted) setState(() => _sending = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) => _open == null ? _list(context) : _conversation(context);
+  Widget build(BuildContext context) {
+    if (_photo case final photo?) {
+      return ScreenshotAnnotator(
+        image: photo,
+        strings: _strings,
+        hideFirst: !widget.controller.isTesterMode,
+        penColor: widget.annotationColor ?? ScreenshotAnnotator.defaultPenColor,
+        onDone: _applyScreenshot,
+        onCancel: _closeImage,
+      );
+    }
+    if (_playing case final recording?) {
+      return ChatRecordingViewer(
+        image: recording,
+        title: _strings.screenRecording,
+        back: _strings.back,
+        loadFailed: _strings.loadFailed,
+        onClose: _closeImage,
+      );
+    }
+    return _open == null ? _list(context) : _conversation(context);
+  }
 
   Widget _list(BuildContext context) {
     return ListView(
@@ -139,8 +324,36 @@ class _OwnFeedbackViewState extends State<OwnFeedbackView> {
     final theme = Theme.of(context);
     final item = _open!;
     final detail = _detail;
+    final attachments = detail?.attachments ?? const <ReporterAttachment>[];
+    final original = attachments.where((file) => file.messageId == null && file.createdAt == item.createdAt);
+    final canAttach = !_sending && !_openingAttachment;
+    final entries = [
+      for (final message in detail?.messages ?? const <ConversationMessage>[])
+        (
+          time: message.createdAt,
+          child: message.fromTeam
+              ? ChatIncomingBubble(text: message.body, icon: Icons.forum_outlined)
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final file in attachments.where((file) => file.messageId == message.id))
+                      Padding(padding: const EdgeInsets.only(bottom: 6), child: _sentAttachment(file, canAttach)),
+                    ChatOutgoingBubble(child: Text(message.body)),
+                  ],
+                ),
+        ),
+      for (final file in attachments.where((file) => file.messageId == null && file.createdAt != item.createdAt))
+        (time: file.createdAt, child: _sentAttachment(file, canAttach)),
+      for (final update in detail?.statusUpdates ?? const <ReporterStatusUpdate>[])
+        (
+          time: update.createdAt,
+          child: ChatIncomingBubble(text: _strings.statusUpdate(update.status), icon: Icons.info_outline),
+        ),
+    ]..sort((left, right) => left.time.compareTo(right.time));
+    final native = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    const replyKey = ValueKey('seaproof-reply');
+    final recorded = widget.recording;
     return Column(
-      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
@@ -150,7 +363,13 @@ class _OwnFeedbackViewState extends State<OwnFeedbackView> {
               IconButton(
                 icon: const BackButtonIcon(),
                 tooltip: _strings.back,
-                onPressed: _sending ? null : () => setState(() => _open = null),
+                onPressed: _sending || _openingAttachment
+                    ? null
+                    : () {
+                        _dismissKeyboard();
+                        if (recorded != null) widget.onRemoveRecording?.call();
+                        setState(() => _open = null);
+                      },
               ),
               Expanded(child: Text(item.title, style: theme.textTheme.titleMedium, maxLines: 2)),
               StatusBadge(
@@ -160,106 +379,164 @@ class _OwnFeedbackViewState extends State<OwnFeedbackView> {
             ],
           ),
         ),
-        Flexible(
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+        const Divider(height: 1),
+        Expanded(
+          child: ChatHistory(
+            key: const ValueKey('seaproof-own-conversation'),
+            controller: _history,
             children: [
               if (_loading)
                 const Center(
                   child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()),
                 ),
               if (detail != null) ...[
-                _Bubble(author: _strings.fromYou, body: detail.description, mine: true),
-                for (final m in detail.messages)
-                  _Bubble(author: m.fromTeam ? _strings.fromTeam : _strings.fromYou, body: m.body, mine: !m.fromTeam),
+                if (original.isNotEmpty) ...[
+                  Text(_strings.attachments, style: theme.textTheme.titleSmall),
+                  for (final file in original)
+                    Padding(padding: const EdgeInsets.only(top: 6), child: _sentAttachment(file, canAttach)),
+                  const SizedBox(height: 12),
+                ],
+                ChatOutgoingBubble(child: Text(detail.description)),
+                for (final entry in entries) ...[const SizedBox(height: 10), entry.child],
               ],
-              if (_error != null)
+              if (_error case final error?)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                  child: Text(error, style: TextStyle(color: theme.colorScheme.error)),
                 ),
             ],
           ),
         ),
+        if (_draft.isNotEmpty || recorded != null)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 115),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Column(
+                children: [
+                  for (final photo in _draft)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: ChatAttachmentRow(
+                        key: const ValueKey('seaproof-reply-draft-screenshot'),
+                        preview: _thumbnail(MemoryImage(photo.bytes)),
+                        title: _strings.screenshotLabel,
+                        onTap: canAttach ? () => _openScreenshot(MemoryImage(photo.bytes), draft: photo) : null,
+                        removeTooltip: _strings.removeScreenshot,
+                        onRemove: canAttach
+                            ? () => setState(() {
+                                _draft.remove(photo);
+                                if (_draft.isEmpty && recorded == null) _attachmentRetryMessageId = null;
+                              })
+                            : null,
+                      ),
+                    ),
+                  if (recorded != null)
+                    ChatAttachmentRow(
+                      preview: _thumbnail(MemoryImage(recorded.firstFrame)),
+                      title: _strings.recordingLabel(recorded.duration),
+                      leadingAction: Icons.play_arrow_outlined,
+                      onTap: canAttach ? () => _playRecording(MemoryImage(recorded.apng)) : null,
+                      removeTooltip: _strings.removeRecording,
+                      onRemove: canAttach && widget.onRemoveRecording != null
+                          ? () {
+                              if (_draft.isEmpty) _attachmentRetryMessageId = null;
+                              widget.onRemoveRecording!();
+                            }
+                          : null,
+                    ),
+                ],
+              ),
+            ),
+          ),
         if (detail != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('seaproof-reply'),
+          ChatComposer(
+            editor: native
+                ? KeyedSubtree(
+                    key: replyKey,
+                    child: IosComposer(
+                      key: _iosComposer,
+                      controller: _reply,
+                      hint: _strings.reply,
+                      maxLength: 5000,
+                      onImage: _paste,
+                      enabled: !_sending,
+                    ),
+                  )
+                : ChatTextField(
+                    fieldKey: replyKey,
                     controller: _reply,
                     enabled: !_sending,
-                    minLines: 1,
-                    maxLines: 5,
+                    hint: _strings.reply,
                     maxLength: 5000,
-                    buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(labelText: _strings.reply, border: const OutlineInputBorder()),
+                    onSubmit: () => unawaited(_send()),
                   ),
+            actions: [
+              if (widget.screenshot case final capture?)
+                IconButton(
+                  key: const ValueKey('seaproof-reply-screenshot'),
+                  tooltip: _strings.includeScreenshot,
+                  icon: const Icon(Icons.photo_camera_outlined),
+                  onPressed: canAttach
+                      ? () => setState(() {
+                          if (!_draft.any((file) => identical(file.bytes, capture))) _draft.add(_screenshot(capture));
+                        })
+                      : null,
                 ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  key: const ValueKey('seaproof-reply-send'),
-                  onPressed: _sending ? null : _send,
-                  child: Text(_sending ? _strings.sending : _strings.send),
+              if (widget.onRecord case final onRecord?)
+                IconButton(
+                  key: const ValueKey('seaproof-reply-record'),
+                  tooltip: _strings.recordScreen,
+                  icon: const Icon(Icons.videocam_outlined),
+                  onPressed: canAttach
+                      ? () {
+                          _dismissKeyboard();
+                          onRecord();
+                        }
+                      : null,
                 ),
-              ],
+            ],
+            send: IconButton.filled(
+              key: const ValueKey('seaproof-reply-send'),
+              tooltip: _sending ? _strings.sending : _strings.send,
+              icon: const Icon(Icons.arrow_upward),
+              onPressed: canAttach ? _send : null,
             ),
           ),
       ],
     );
   }
-}
 
-class _Bubble extends StatelessWidget {
-  const _Bubble({required this.author, required this.body, required this.mine});
-
-  final String author;
-  final String body;
-  final bool mine;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    // Yours on the right in the primary colour, the team's on the left; the pointed corner shows who spoke.
-    const round = Radius.circular(16);
-    const point = Radius.circular(4);
-    return Align(
-      alignment: mine ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380),
-        child: Column(
-          crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 6),
-            Text(author, style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
-            const SizedBox(height: 4),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: mine ? scheme.primary : scheme.surface,
-                border: mine ? null : Border.all(color: scheme.outlineVariant),
-                borderRadius: BorderRadiusDirectional.only(
-                  topStart: mine ? round : point,
-                  topEnd: mine ? point : round,
-                  bottomStart: round,
-                  bottomEnd: round,
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Text(body, style: TextStyle(color: mine ? scheme.onPrimary : scheme.onSurface)),
-              ),
-            ),
-          ],
-        ),
-      ),
+  Widget _sentAttachment(ReporterAttachment file, bool enabled) {
+    final source = NetworkImage(file.url.toString());
+    final recording = file.kind == AttachmentKind.recording;
+    return ChatAttachmentRow(
+      key: ValueKey('seaproof-attachment-${file.id}'),
+      preview: recording
+          ? const SizedBox(width: 56, height: 40, child: Icon(Icons.video_file_outlined))
+          : _thumbnail(source),
+      title: recording ? _strings.screenRecording : _strings.screenshotLabel,
+      leadingAction: recording ? Icons.play_arrow_outlined : Icons.edit_outlined,
+      onTap: !enabled
+          ? null
+          : () {
+              if (recording) {
+                _playRecording(source);
+              } else {
+                unawaited(_openScreenshot(source));
+              }
+            },
     );
   }
+
+  Widget _thumbnail(ImageProvider<Object> source) => Image(
+    image: source,
+    width: 56,
+    height: 40,
+    fit: BoxFit.cover,
+    gaplessPlayback: true,
+    errorBuilder: (_, _, _) => const SizedBox(width: 56, height: 40, child: Icon(Icons.broken_image_outlined)),
+  );
 }
 
 /// A public status as a small pill, coloured for the statuses that mean progress.

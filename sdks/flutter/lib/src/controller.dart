@@ -370,8 +370,12 @@ class SeaproofController extends ChangeNotifier {
       client.sendMessage(id, body, await _requireReporterKey());
 
   /// Adds files to one of the user's items after it was sent. Returns the ones that failed to upload.
-  Future<List<FeedbackAttachment>> addAttachments(String id, List<FeedbackAttachment> attachments) async =>
-      client.addAttachments(id, attachments, await _requireReporterKey());
+  /// Pass [messageId] when the files accompany a reply.
+  Future<List<FeedbackAttachment>> addAttachments(
+    String id,
+    List<FeedbackAttachment> attachments, {
+    String? messageId,
+  }) async => client.addAttachments(id, attachments, await _requireReporterKey(), messageId: messageId);
 
   /// The ideas the team published, most voted first.
   Future<List<PublicIdea>> ideas() async {
@@ -414,10 +418,30 @@ class SeaproofController extends ChangeNotifier {
   Future<List<Suggestion>> suggest(String text, {FeedbackType? type}) async =>
       client.suggest(text, type: type, reporterKey: await _reporterKey());
 
-  /// What a draft is missing, as at most two questions. Never throws. Calls with the same
+  /// What a report is missing, as at most five questions. Never throws. Calls with the same
   /// [conversationId] count as one Assist conversation.
-  Future<ReviewResult> review(FeedbackType type, String description, {String? conversationId}) async =>
-      client.review(type, description, reporterKey: await _reporterKey(), conversationId: conversationId);
+  Future<ReviewResult> review(
+    FeedbackType type,
+    String description, {
+    String? conversationId,
+    String? feedbackId,
+  }) async => client.review(
+    type,
+    description,
+    reporterKey: await _reporterKey(),
+    conversationId: conversationId,
+    feedbackId: feedbackId,
+  );
+
+  /// Records a server-issued question on the saved report.
+  Future<bool> recordAssistQuestion(String feedbackId, String? receipt) async {
+    if (receipt == null) {
+      return true;
+    }
+
+    final key = await _reporterKey();
+    return key != null && await client.recordAssistQuestion(feedbackId, receipt, key);
+  }
 
   /// Opens the feedback panel. Needs a [SeaproofHost] in the widget tree.
   void show({FeedbackType? type, bool? includeScreenshot}) {

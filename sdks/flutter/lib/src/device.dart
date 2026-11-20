@@ -1,7 +1,7 @@
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 
-/// A short device description such as `Google Pixel 8`, `iPhone16,1` or `MacBookPro18,3`.
+/// A short device description such as `Google Pixel 8`, `iPhone 16 Pro` or `MacBookPro18,3`.
 ///
 /// Only the model is read: no device names, serial numbers or advertising ids.
 Future<String?> platformDeviceModel() async {
@@ -16,7 +16,9 @@ Future<String?> platformDeviceModel() async {
 
     return switch (defaultTargetPlatform) {
       TargetPlatform.android => await plugin.androidInfo.then((a) => '${a.manufacturer} ${a.model}'),
-      TargetPlatform.iOS => await plugin.iosInfo.then((i) => i.utsname.machine),
+      TargetPlatform.iOS => await plugin.iosInfo.then(
+        (i) => i.modelName.isEmpty || i.modelName == 'Unknown device' ? i.utsname.machine : i.modelName,
+      ),
       TargetPlatform.macOS => await plugin.macOsInfo.then((m) => m.model),
       TargetPlatform.windows => await plugin.windowsInfo.then((w) => w.productName),
       TargetPlatform.linux => await plugin.linuxInfo.then((l) => l.prettyName),

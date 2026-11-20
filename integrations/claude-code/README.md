@@ -4,8 +4,9 @@ Adds Seaproof to Claude Code: the Seaproof MCP server and two skills.
 
 - **`add-seaproof`**: adds in-app bug reporting and user feedback to a React, Next.js or
   Flutter app. It creates the project and an API key over MCP, stores the key outside source
-  control, installs and wires in the SDK, passes the build's commit, masks personal data and
-  adds an AGENTS.md section.
+  control, installs and wires in the SDK with `get_sdk_setup`, passes the build's commit, masks
+  personal data and adds an AGENTS.md section. It offers to forward bugs to GitHub or Azure DevOps
+  and to set up a scheduled triage job with a service agent.
 - **`triage-seaproof`**: goes through new reports. It finds duplicates, sets severity and status,
   writes notes with the likely cause, and forwards real bugs.
 

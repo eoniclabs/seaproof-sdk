@@ -1,6 +1,11 @@
-## 0.1.0
+## 0.1.0-beta.1
 
-- First version: feedback panel with screenshot and annotation, shake and floating-button
+- First beta, for testing against Seaproof staging. Pass the deployment's address as
+  `endpoint` in `SeaproofConfig`; without it the SDK uses https://api.seaproof.io.
+- The feedback panel keeps its fields and send button above the software keyboard.
+  Hide the keyboard with the header button, by tapping outside a field or by dragging the conversation.
+- On iPhone and iPad, paste a copied screenshot into the report conversation and review it before sending.
+- Feedback panel with screenshot and annotation, shake and floating-button
   triggers, keyboard shortcut on desktop, tester and production modes, masking of sensitive
   widgets, identified or anonymous reporters, contact consent and theming
   through `SeaproofTheme`. Texts in English and Swedish.

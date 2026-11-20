@@ -20,6 +20,11 @@ key so other sites cannot use it. Keep the key in `.env.local`, out of git:
 VITE_SEAPROOF_KEY=sp_...
 ```
 
+> **Beta.** While Seaproof is in beta, apps report to a test deployment rather than
+> https://api.seaproof.io. Pass its address as `endpoint` (a prop on `SeaproofProvider`, an
+> option to `createSeaproof`), for example `endpoint={import.meta.env.VITE_SEAPROOF_ENDPOINT}`.
+> The admin's install steps and the MCP tool `get_sdk_setup` show the right address.
+
 ## React
 
 ```tsx
@@ -49,6 +54,21 @@ a test-mode environment, the floating **Feedback** button is shown and the diagn
 attached to reports. With a key in a production-mode environment, neither happens, and you open the widget from your own button with
 `useSeaproof().open()`. You can override this with `mode: "tester" | "production"` and
 `<FeedbackWidget launcher={true} />`.
+
+### Feedback button placement
+
+In **Project Settings → Feedback button**, choose the built-in button's position, text and
+orientation. The SDK applies the settings on startup. An explicit `label` prop overrides the
+project's text.
+
+When **Avoid covering other controls** is on, mark the elements that the button should stay clear
+of. It uses the preferred position whenever that spot is free.
+
+```tsx
+<aside data-seaproof-avoid>
+  <HelpButton />
+</aside>
+```
 
 ## Diagnostics
 
@@ -164,7 +184,7 @@ changes in your code.
   text. "Same for me" sends the report linked to the known one, and ideas can be voted for
   there. Only the title and summary the team made public are ever shown.
 - **Follow-up questions:** after the report is saved, an AI model asks what it is missing, one
-  question at a time and at most two. The answers are added to the report. A slow or failing
+  question at a time and at most five. The answers are added to the report. A slow or failing
   model never stops a report.
 
 Without React: `assistSettings()`, `suggest(text, type)`, `review(type, description, conversationId)`

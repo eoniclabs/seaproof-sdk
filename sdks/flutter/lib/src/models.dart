@@ -244,6 +244,7 @@ final class SeaproofProject {
     this.environmentId,
     this.environmentName,
     this.branding = const SeaproofBranding(),
+    this.launcher,
   });
 
   /// The project id.
@@ -267,6 +268,67 @@ final class SeaproofProject {
 
   /// The project's colour and logo, as set in the admin.
   final SeaproofBranding branding;
+
+  /// The project's built-in feedback button settings, or null to keep the SDK defaults.
+  final SeaproofLauncherSettings? launcher;
+}
+
+/// Where the project's feedback button starts.
+enum SeaproofLauncherPosition {
+  /// The top left corner.
+  topLeft,
+
+  /// The middle of the left edge.
+  middleLeft,
+
+  /// The bottom left corner.
+  bottomLeft,
+
+  /// The top right corner.
+  topRight,
+
+  /// The middle of the right edge.
+  middleRight,
+
+  /// The bottom right corner.
+  bottomRight;
+
+  static SeaproofLauncherPosition? _parse(Object? value) => switch (value) {
+    'top-left' => topLeft,
+    'middle-left' => middleLeft,
+    'bottom-left' => bottomLeft,
+    'top-right' => topRight,
+    'middle-right' => middleRight,
+    'bottom-right' => bottomRight,
+    _ => null,
+  };
+}
+
+/// A project's built-in feedback button, configured in Seaproof.
+@immutable
+final class SeaproofLauncherSettings {
+  /// Describes the launcher appearance and placement.
+  const SeaproofLauncherSettings({this.position, this.label, this.vertical = false, this.avoidObstructions = false});
+
+  /// Deserializes a project's launcher settings from the SDK endpoint.
+  factory SeaproofLauncherSettings.fromJson(Map<String, Object?> json) => SeaproofLauncherSettings(
+    position: SeaproofLauncherPosition._parse(json['position']),
+    label: json['label'] is String ? json['label'] as String : null,
+    vertical: json['orientation'] == 'vertical',
+    avoidObstructions: json['avoidObstructions'] == true,
+  );
+
+  /// The preferred anchor, if the project selected one.
+  final SeaproofLauncherPosition? position;
+
+  /// Custom button text. A null value uses the SDK locale.
+  final String? label;
+
+  /// Whether the label and icon run vertically.
+  final bool vertical;
+
+  /// Allow the launcher to move away from app-provided exclusion rectangles.
+  final bool avoidObstructions;
 }
 
 /// A project's look, set in the Seaproof admin. The app's own `SeaproofTheme` wins over it.
@@ -419,6 +481,62 @@ final class ConversationMessage {
   final DateTime createdAt;
 }
 
+/// A screenshot or screen recording from the reporter's conversation.
+@immutable
+final class ReporterAttachment {
+  /// Creates a screenshot with its short-lived download URL.
+  const ReporterAttachment({
+    required this.id,
+    required this.kind,
+    required this.url,
+    required this.createdAt,
+    this.messageId,
+  });
+
+  /// Reads the API's JSON.
+  factory ReporterAttachment.fromJson(Map<String, Object?> json) => ReporterAttachment(
+    id: json['id']! as String,
+    kind: AttachmentKind.values.byName(json['kind']! as String),
+    url: Uri.parse(json['url']! as String),
+    createdAt: _date(json['createdAt']),
+    messageId: json['messageId'] as String?,
+  );
+
+  /// Attachment id.
+  final String id;
+
+  /// Whether it is a screenshot or a recording.
+  final AttachmentKind kind;
+
+  /// Short-lived download URL.
+  final Uri url;
+
+  /// When it was attached.
+  final DateTime createdAt;
+
+  /// The reporter message sent with this attachment, if there is one.
+  final String? messageId;
+}
+
+/// A public status change shown in the reporter's conversation.
+@immutable
+final class ReporterStatusUpdate {
+  /// Creates a status entry.
+  const ReporterStatusUpdate({required this.status, required this.createdAt});
+
+  /// Reads the API's JSON.
+  factory ReporterStatusUpdate.fromJson(Map<String, Object?> json) => ReporterStatusUpdate(
+    status: PublicStatus.values.byName(json['status']! as String),
+    createdAt: _date(json['createdAt']),
+  );
+
+  /// The status shown to the reporter.
+  final PublicStatus status;
+
+  /// When the status changed.
+  final DateTime createdAt;
+}
+
 /// An item from this installation with its conversation.
 @immutable
 final class OwnFeedbackDetail {
@@ -429,6 +547,8 @@ final class OwnFeedbackDetail {
     required this.description,
     required this.status,
     required this.messages,
+    this.attachments = const [],
+    this.statusUpdates = const [],
   });
 
   /// Reads the API's JSON.
@@ -440,6 +560,14 @@ final class OwnFeedbackDetail {
     messages: [
       for (final m in (json['messages']! as List<Object?>).cast<Map<String, Object?>>())
         ConversationMessage.fromJson(m),
+    ],
+    attachments: [
+      for (final attachment in (json['attachments'] as List<Object?>? ?? const []).cast<Map<String, Object?>>())
+        ReporterAttachment.fromJson(attachment),
+    ],
+    statusUpdates: [
+      for (final update in (json['statusUpdates'] as List<Object?>? ?? const []).cast<Map<String, Object?>>())
+        ReporterStatusUpdate.fromJson(update),
     ],
   );
 
@@ -458,6 +586,12 @@ final class OwnFeedbackDetail {
   /// Replies and the user's answers, oldest first.
   final List<ConversationMessage> messages;
 
+  /// Confirmed screenshots and recordings, oldest first.
+  final List<ReporterAttachment> attachments;
+
+  /// Recent public status changes, oldest first.
+  final List<ReporterStatusUpdate> statusUpdates;
+
   /// A copy with [message] added.
   OwnFeedbackDetail withMessage(ConversationMessage message) => OwnFeedbackDetail(
     id: id,
@@ -465,6 +599,8 @@ final class OwnFeedbackDetail {
     description: description,
     status: status,
     messages: [...messages, message],
+    attachments: attachments,
+    statusUpdates: statusUpdates,
   );
 }
 
@@ -539,7 +675,7 @@ final class AssistSettings {
   /// Known problems and public ideas like what the user is writing.
   final bool suggestions;
 
-  /// Up to two questions about what a report is missing, before it is sent.
+  /// Up to five questions about what a report is missing, asked after it is saved.
   final bool followUpQuestions;
 }
 
@@ -587,16 +723,22 @@ final class Suggestion {
 /// Follow-up questions about a draft.
 final class ReviewResult {
   /// Creates a result.
-  const ReviewResult({this.questions = const [], this.limited = false});
+  const ReviewResult({this.questions = const [], this.limited = false, this.questionReceipts = const []});
 
   /// Reads the API's JSON.
   factory ReviewResult.fromJson(Map<String, Object?> json) => ReviewResult(
     questions: [for (final q in (json['questions'] as List<Object?>? ?? const [])) q! as String],
     limited: json['limited'] as bool? ?? false,
+    questionReceipts: [
+      for (final receipt in (json['questionReceipts'] as List<Object?>? ?? const [])) receipt! as String,
+    ],
   );
 
   /// What the team would need to know. Empty when the draft is complete.
   final List<String> questions;
+
+  /// Receipts for saving the corresponding questions when shown on a report.
+  final List<String> questionReceipts;
 
   /// No questions this time because the organization's monthly Assist limit is reached.
   final bool limited;

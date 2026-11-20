@@ -72,6 +72,10 @@ final class SeaproofClient {
         ),
         _ => const SeaproofBranding(),
       },
+      launcher: switch (body['launcher']) {
+        final Map<String, Object?> value => SeaproofLauncherSettings.fromJson(value),
+        _ => null,
+      },
     );
   }
 
@@ -172,16 +176,19 @@ final class SeaproofClient {
 
   /// Adds files to an item sent with [reporterKey], such as a marked-up screenshot or a
   /// recording made after the report was saved. Returns the ones that failed to upload.
+  /// Pass [messageId] when the files accompany a reply.
   Future<List<FeedbackAttachment>> addAttachments(
     String id,
     List<FeedbackAttachment> attachments,
-    String reporterKey,
-  ) async {
+    String reporterKey, {
+    String? messageId,
+  }) async {
     final body = await _sendObject(
       () => _http.post(
         _uri('/api/v1/sdk/me/feedback/$id/attachments'),
         headers: {..._reporterHeaders(reporterKey), 'Content-Type': 'application/json'},
         body: jsonEncode({
+          'messageId': ?messageId,
           'attachments': [
             for (final a in attachments)
               {'kind': a.kind.name, 'fileName': a.fileName, 'contentType': a.contentType, 'sizeBytes': a.bytes.length},
@@ -249,6 +256,7 @@ final class SeaproofClient {
     String description, {
     String? reporterKey,
     String? conversationId,
+    String? feedbackId,
   }) async {
     try {
       return ReviewResult.fromJson(
@@ -259,12 +267,33 @@ final class SeaproofClient {
               ...(reporterKey == null ? _headers : _reporterHeaders(reporterKey)),
               'Content-Type': 'application/json',
             },
-            body: jsonEncode({'type': type.name, 'description': description, 'conversationId': ?conversationId}),
+            body: jsonEncode({
+              'type': type.name,
+              'description': description,
+              'conversationId': ?conversationId,
+              'feedbackId': ?feedbackId,
+            }),
           ),
         ),
       );
     } on SeaproofException {
       return const ReviewResult();
+    }
+  }
+
+  /// Records the question before showing it in the widget.
+  Future<bool> recordAssistQuestion(String feedbackId, String receipt, String reporterKey) async {
+    try {
+      await _send(
+        () => _http.post(
+          _uri('/api/v1/sdk/assist/questions/shown'),
+          headers: {..._reporterHeaders(reporterKey), 'Content-Type': 'application/json'},
+          body: jsonEncode({'feedbackId': feedbackId, 'receipt': receipt}),
+        ),
+      );
+      return true;
+    } on SeaproofException {
+      return false;
     }
   }
 

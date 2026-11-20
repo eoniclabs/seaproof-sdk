@@ -10,6 +10,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 import '../config.dart';
 import '../controller.dart';
 import '../design.dart';
+import '../models.dart';
 import '../screen_recorder.dart';
 import '../shake_detector.dart';
 import '../strings.dart';
@@ -17,6 +18,7 @@ import '../theme.dart';
 import 'feedback_panel.dart';
 import 'floater.dart';
 import 'mask.dart';
+import 'project_floater.dart';
 
 /// Hosts Seaproof in the app: takes screenshots, listens for the triggers and shows the panel.
 ///
@@ -33,6 +35,7 @@ class SeaproofHost extends StatefulWidget {
     this.controller,
     this.strings,
     this.theme,
+    this.launcherObstructions,
     @visibleForTesting this.shakeSamples,
   });
 
@@ -48,6 +51,10 @@ class SeaproofHost extends StatefulWidget {
   /// The look of the floating button and panel. Follows the app's theme when null; see
   /// [SeaproofTheme] for setting it through `ThemeData.extensions` instead.
   final SeaproofTheme? theme;
+
+  /// Rectangles in this host's coordinates that the adaptive feedback button should avoid.
+  /// Update the listenable when a control appears, moves or is dismissed.
+  final ValueListenable<List<Rect>>? launcherObstructions;
 
   /// Replaces the accelerometer, for tests.
   final Stream<(double, double, double)>? shakeSamples;
@@ -253,6 +260,29 @@ class _SeaproofHostState extends State<SeaproofHost> {
     }
   }
 
+  Widget _configuredLauncher(
+    SeaproofLauncherSettings settings,
+    String defaultLabel,
+    ThemeData theme,
+    IconData icon,
+    double minimumSize,
+  ) {
+    Widget buildButton(List<Rect> obstructions) => ProjectFloater(
+      settings: settings,
+      label: settings.label ?? defaultLabel,
+      onPressed: _controller.show,
+      theme: theme,
+      icon: icon,
+      minimumSize: minimumSize,
+      obstructions: obstructions,
+    );
+
+    final obstructions = widget.launcherObstructions;
+    return settings.avoidObstructions && obstructions != null
+        ? ValueListenableBuilder(valueListenable: obstructions, builder: (_, value, _) => buildButton(value))
+        : buildButton(const []);
+  }
+
   @override
   Widget build(BuildContext context) {
     final strings =
@@ -260,6 +290,9 @@ class _SeaproofHostState extends State<SeaproofHost> {
     final open = _open;
     final theme = SeaproofTheme.of(context, widget.theme, _controller.brandingTheme);
     final themeData = theme.applyTo(Theme.of(context));
+    final launcher = _controller.project?.launcher;
+    final launcherSize = theme.floatingButtonSize ?? SeaproofTheme.defaultFloatingButtonSize;
+    final launcherIcon = theme.floatingButtonIcon ?? Icons.chat_bubble_outline;
 
     return MaskScope(
       registry: _masks,
@@ -269,13 +302,18 @@ class _SeaproofHostState extends State<SeaproofHost> {
           children: [
             RepaintBoundary(key: _boundaryKey, child: widget.child),
             if (open == null && _controller.triggers.contains(SeaproofTrigger.floatingButton))
-              SeaproofFloater(
-                onPressed: _controller.show,
-                tooltip: strings.openFeedback,
-                themeData: themeData,
-                size: theme.floatingButtonSize ?? SeaproofTheme.defaultFloatingButtonSize,
-                icon: theme.floatingButtonIcon ?? Icons.chat_bubble_outline,
-              ),
+              if (launcher == null)
+                SeaproofFloater(
+                  onPressed: _controller.show,
+                  tooltip: strings.openFeedback,
+                  themeData: themeData,
+                  size: launcherSize,
+                  icon: launcherIcon,
+                )
+              else
+                Positioned.fill(
+                  child: _configuredLauncher(launcher, strings.openFeedback, themeData, launcherIcon, launcherSize),
+                ),
             if (open != null)
               Positioned.fill(
                 child: Offstage(

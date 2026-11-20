@@ -10,6 +10,9 @@ feedback and ideas from inside the app. Docs for agents: https://seaproof.io/llm
 
 ## Adding it
 
+0. With the Seaproof MCP server connected, follow https://seaproof.io/docs/start.md instead: it
+   creates the project and key and calls `get_sdk_setup`, which returns the exact install command
+   and code. Otherwise:
 1. Find the stack and follow its guide exactly:
    - React (Vite and similar): https://seaproof.io/docs/react.md
    - Next.js: https://seaproof.io/docs/nextjs.md
@@ -27,8 +30,8 @@ feedback and ideas from inside the app. Docs for agents: https://seaproof.io/llm
 ## Rules
 
 - Never hard-code an API key; never commit one.
-- Test and staging keys show the tester button and attach diagnostics; production keys do
-  neither, so production apps open the widget from their own button
+- Keys in a test-mode environment show the tester button and attach diagnostics; keys in a
+  production-mode environment do neither, so production apps open the widget from their own button
   (`useSeaproof().open()` or `SeaproofFeedbackButton`).
 - A failing request logs an error code with a fix; look it up at
   https://seaproof.io/docs/errors.md instead of guessing.

@@ -15,7 +15,8 @@ import {
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Annotator } from "./Annotator";
 import { SuggestionList } from "./AssistViews";
-import { ArrowUpIcon, CameraIcon, CloseIcon, MessageIcon, SeaproofMark, SparkleIcon, StopIcon, typeIcons, VideoIcon } from "./icons";
+import { FeedbackLauncher } from "./FeedbackLauncher";
+import { ArrowUpIcon, CameraIcon, CloseIcon, SeaproofMark, SparkleIcon, StopIcon, typeIcons, VideoIcon } from "./icons";
 import { IdeasView } from "./IdeasView";
 import { MyFeedbackView } from "./MyFeedbackView";
 import { quickReplyLabels, script, type AssistantTurn, type QuickReply } from "./script";
@@ -23,7 +24,7 @@ import { useSeaproof } from "./SeaproofProvider";
 import { css } from "./styles";
 
 export interface FeedbackWidgetProps {
-  /** Text on the floating button. */
+  /** Text on the floating button. Overrides the project setting. */
   label?: string;
   /**
    * Show the floating button. `"auto"` (default) shows it to testers only; in production,
@@ -76,7 +77,7 @@ const prompts: Record<FeedbackType, { label: string; placeholder: string }> = {
 const SUGGEST_DELAY_MS = 600;
 const MIN_SUGGEST_LENGTH = 10;
 /** Seaproof Assist asks at most this many questions per report. */
-const MAX_QUESTIONS = 2;
+const MAX_QUESTIONS = 5;
 
 /** One line in the conversation. Media lines show what was attached. */
 type ChatItem =
@@ -88,7 +89,7 @@ type Saved = { id: string; number: number };
 type Shot = { file: Blob; url: string; hidden: number; marked: boolean };
 
 export function FeedbackWidget({
-  label = "Feedback",
+  label,
   launcher = "auto",
   reporter,
   screenshot,
@@ -104,6 +105,7 @@ export function FeedbackWidget({
   const [missingText, setMissingText] = useState(false);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [saved, setSaved] = useState<Saved | null>(null);
+  const activeReport = useRef<string | null>(null);
   const [finished, setFinished] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,7 +122,7 @@ export function FeedbackWidget({
   const [assist, setAssist] = useState<AssistSettings>({ suggestions: false, followUpQuestions: false });
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [voted, setVoted] = useState<ReadonlySet<string>>(new Set());
-  const [questions, setQuestions] = useState<string[]>([]);
+  const [questions, setQuestions] = useState<{ text: string; receipt?: string }[]>([]);
   // All Assist help for one report is one conversation against the plan's quota.
   const [conversationId, setConversationId] = useState(newConversationId);
   const nextId = useRef(0);
@@ -135,6 +137,7 @@ export function FeedbackWidget({
     () => client.branding,
     () => undefined,
   );
+  const launcherSettings = useSyncExternalStore(client.subscribe, () => client.launcher, () => undefined);
   const logoUrl = useLogoUrl(branding?.logo ?? null, client.logo);
   // "Your feedback" and votes belong to this user; with a userHash, on every device.
   useEffect(() => {
@@ -213,8 +216,10 @@ export function FeedbackWidget({
     urls.current.forEach((u) => URL.revokeObjectURL(u));
     urls.current = [];
     firstShot.current = null;
+    activeReport.current = null;
     setItems([]);
     setSaved(null);
+    setBusy(false);
     setFinished(false);
     setError(null);
     setShot(null);
@@ -318,6 +323,7 @@ export function FeedbackWidget({
       return;
     }
     // Saved: nothing after this may undo the conversation, or a retry would send it twice.
+    activeReport.current = result.id;
     setSaved(result);
     setSuggestions([]);
     try {
@@ -325,9 +331,9 @@ export function FeedbackWidget({
       await followUp(result, description, linkedTo);
     } catch (e) {
       console.warn("Seaproof: the report was saved, but the follow-up failed.", e);
-      say(script.saved(type, result.number, scriptOptions));
+      if (activeReport.current === result.id) say(script.saved(type, result.number, scriptOptions));
     } finally {
-      setBusy(false);
+      if (activeReport.current === result.id) setBusy(false);
     }
   }
 
@@ -337,15 +343,24 @@ export function FeedbackWidget({
       return;
     }
     if (assist.followUpQuestions) {
-      const review = await client.review(type, description, conversationId);
-      const asked = review.questions.slice(0, MAX_QUESTIONS);
-      if (asked.length > 0) {
-        setQuestions(asked.slice(1));
-        say(script.question(type, result.number, asked[0]!, true, scriptOptions));
+      const review = await client.review(type, description, conversationId, result.id);
+      if (activeReport.current !== result.id) return;
+      const [first, ...rest] = review.questions.slice(0, MAX_QUESTIONS).map((text, index) => ({
+        text, receipt: review.questionReceipts?.[index],
+      }));
+      const recorded = first && await recordQuestion(result.id, first.receipt);
+      if (activeReport.current !== result.id) return;
+      if (first && recorded) {
+        setQuestions(rest);
+        say(script.question(type, result.number, first.text, true, scriptOptions));
         return;
       }
     }
     say(script.saved(type, result.number, scriptOptions));
+  }
+
+  async function recordQuestion(feedbackId: string, receipt?: string) {
+    return !receipt || await client.recordAssistQuestion?.(feedbackId, receipt);
   }
 
   /** Later messages and files go to the saved report. */
@@ -357,21 +372,23 @@ export function FeedbackWidget({
     const hadShot = !!shot;
     const attachments = takePending();
     try {
-      await Promise.all([
-        message ? client.sendMessage(report.id, message) : Promise.resolve(),
-        attachments.length ? client.addAttachments(report.id, attachments) : Promise.resolve(),
-      ]);
+      const sent = message ? await client.sendMessage(report.id, message) : null;
+      if (attachments.length) await client.addAttachments(report.id, attachments, sent?.id);
+      if (activeReport.current !== report.id) return;
       const [next, ...rest] = questions;
-      if (message && next) {
+      const recorded = message && next && await recordQuestion(report.id, next.receipt);
+      if (activeReport.current !== report.id) return;
+      if (next && recorded) {
         setQuestions(rest);
-        say(script.question(type, report.number, next, false, scriptOptions));
+        say(script.question(type, report.number, next.text, false, scriptOptions));
       } else {
+        if (message) setQuestions([]);
         say(script.added(report.number, message ? "message" : hadShot ? "screenshot" : "recording"));
       }
     } catch (e) {
-      setError(e instanceof Error ? `It could not be added: ${e.message}` : "It could not be added.");
+      if (activeReport.current === report.id) setError(e instanceof Error ? `It could not be added: ${e.message}` : "It could not be added.");
     } finally {
-      setBusy(false);
+      if (activeReport.current === report.id) setBusy(false);
     }
   }
 
@@ -484,12 +501,7 @@ export function FeedbackWidget({
       <style>{css}</style>
       {isRecording && <RecordingBar recorder={recorderRef.current} onStop={() => void recorderRef.current?.stop()} />}
       {showLauncher && !isOpen && !isRecording && (
-        <button type="button" className="seaproof-launcher" aria-label={label} onClick={open}>
-          <MessageIcon />
-          {label}
-          {isTesterMode && <span className="seaproof-launcher-tag">TEST</span>}
-          {unread && <span className="seaproof-launcher-dot" />}
-        </button>
+        <FeedbackLauncher label={label} config={launcherSettings} tester={isTesterMode} unread={unread} onOpen={open} />
       )}
       {isOpen && annotating && (
         <Annotator image={annotating} isTesterMode={isTesterMode} onDone={finishMarking} onCancel={() => setAnnotating(null)} />

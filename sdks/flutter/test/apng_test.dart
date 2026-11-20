@@ -58,6 +58,7 @@ void main() {
       expect(sequences, List.generate(sequences.length, (i) => i));
 
       final codec = await ui.instantiateImageCodec(apng);
+      expect(codec.frameCount, 3, reason: 'the recording viewer can play every frame');
       final frame = await codec.getNextFrame();
       expect(frame.image.width, 8);
       frame.image.dispose();

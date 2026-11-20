@@ -20,6 +20,7 @@ class SeaproofStrings {
     required this.sending,
     required this.cancel,
     required this.close,
+    required this.hideKeyboard,
     required this.thanks,
     required this.thanksDetail,
     required this.failed,
@@ -80,6 +81,17 @@ class SeaproofStrings {
     required this.toolArrow,
     required this.toolPen,
     required this.toolHide,
+    this.addEmail = 'Add e-mail',
+    this.editEmail = 'Edit e-mail',
+    this.closeChat = 'Close chat',
+    this.applyScreenshotEdits = 'Save changes',
+    this.attachments = 'Attachments',
+    this.screenRecording = 'Screen recording',
+    this.statusUpdates = const {},
+    this.pasteScreenshot = 'Paste screenshot',
+    this.pastedScreenshot = 'Pasted screenshot',
+    this.noClipboardScreenshot = 'There is no screenshot to paste. Copy an image first.',
+    this.pasteScreenshotFailed = 'The image could not be pasted. Try a smaller screenshot.',
   });
 
   /// English.
@@ -101,6 +113,7 @@ class SeaproofStrings {
     sending: 'Sending…',
     cancel: 'Cancel',
     close: 'Close',
+    hideKeyboard: 'Hide keyboard',
     thanks: 'Thank you!',
     thanksDetail: 'Your feedback has been sent.',
     failed: 'It could not be sent. Check your connection and try again.',
@@ -118,6 +131,13 @@ class SeaproofStrings {
       PublicStatus.inProgress: 'In progress',
       PublicStatus.done: 'Done',
       PublicStatus.closed: 'Closed',
+    },
+    statusUpdates: {
+      PublicStatus.received: 'Your report was reopened.',
+      PublicStatus.underReview: 'The team is reviewing your report.',
+      PublicStatus.inProgress: 'The team is working on your report.',
+      PublicStatus.done: 'The team marked your report as resolved.',
+      PublicStatus.closed: 'The team closed your report.',
     },
     oneReply: '1 reply',
     manyReplies: '{count} replies',
@@ -147,8 +167,8 @@ class SeaproofStrings {
     testMode: 'Test mode',
     greeting: 'Hi! What would you like to tell us?',
     greetingTester: "What did you find? Describe it and send. A screenshot and the app's logs come along.",
-    savedShow: 'Thanks, it is saved as #{number}. Do you want to show us where it happens?',
-    savedBug: 'Thanks, it is saved as #{number}. Anything to add? Otherwise you are done.',
+    savedShow: 'Report #{number} was sent. You can add more details here.',
+    savedBug: 'Report #{number} was sent. You can add more details here.',
     savedIdea: 'Thanks for the idea, the team has it as #{number}. What would it help you do?',
     savedQuestion: 'Thanks! The team answers here, and you find it under Your feedback (#{number}).',
     savedFeedback: 'Thanks for telling us, it is saved as #{number}. Anything to add?',
@@ -159,7 +179,7 @@ class SeaproofStrings {
     addedScreenshot: 'The screenshot is attached to #{number}.',
     addedRecording: 'The recording is attached to #{number}.',
     addFailed: 'It could not be added. Check your connection and try again.',
-    markOnScreen: 'Mark on the screen',
+    markOnScreen: 'Mark up screenshot',
     addHint: 'Add something…',
     screenshotLabel: 'Screenshot',
     screenshotMarked: 'Screenshot, marked up',
@@ -182,6 +202,12 @@ class SeaproofStrings {
     descriptionHint: 'Vad hände, eller vad önskar du?',
     descriptionRequired: 'Skriv några ord.',
     emailLabel: 'E-post (valfritt)',
+    addEmail: 'Lägg till e-post',
+    editEmail: 'Ändra e-post',
+    closeChat: 'Stäng chatten',
+    applyScreenshotEdits: 'Spara ändringar',
+    attachments: 'Bilagor',
+    screenRecording: 'Skärminspelning',
     mayContact: 'Ni får kontakta mig om detta',
     includeScreenshot: 'Bifoga skärmbild',
     markScreenshot: 'Markera',
@@ -189,6 +215,7 @@ class SeaproofStrings {
     sending: 'Skickar…',
     cancel: 'Avbryt',
     close: 'Stäng',
+    hideKeyboard: 'Dölj tangentbord',
     thanks: 'Tack!',
     thanksDetail: 'Din feedback är skickad.',
     failed: 'Det gick inte att skicka. Kontrollera anslutningen och försök igen.',
@@ -206,6 +233,13 @@ class SeaproofStrings {
       PublicStatus.inProgress: 'På gång',
       PublicStatus.done: 'Klar',
       PublicStatus.closed: 'Avslutad',
+    },
+    statusUpdates: {
+      PublicStatus.received: 'Din rapport har öppnats igen.',
+      PublicStatus.underReview: 'Teamet granskar din rapport.',
+      PublicStatus.inProgress: 'Teamet arbetar med din rapport.',
+      PublicStatus.done: 'Teamet har markerat din rapport som löst.',
+      PublicStatus.closed: 'Teamet har avslutat din rapport.',
     },
     oneReply: '1 svar',
     manyReplies: '{count} svar',
@@ -235,8 +269,8 @@ class SeaproofStrings {
     testMode: 'Testläge',
     greeting: 'Hej! Vad vill du berätta?',
     greetingTester: 'Vad hittade du? Beskriv det och skicka. Skärmbild och appens loggar följer med.',
-    savedShow: 'Tack, det är sparat som #{number}. Vill du visa oss var det händer?',
-    savedBug: 'Tack, det är sparat som #{number}. Något att lägga till? Annars är du klar.',
+    savedShow: 'Rapport #{number} är skickad. Du kan lägga till fler detaljer här.',
+    savedBug: 'Rapport #{number} är skickad. Du kan lägga till fler detaljer här.',
     savedIdea: 'Tack för idén, teamet har den som #{number}. Vad skulle den hjälpa dig med?',
     savedQuestion: 'Tack! Teamet svarar här, och du hittar det under Din feedback (#{number}).',
     savedFeedback: 'Tack för att du berättar, det är sparat som #{number}. Något att lägga till?',
@@ -247,7 +281,7 @@ class SeaproofStrings {
     addedScreenshot: 'Skärmbilden är bifogad till #{number}.',
     addedRecording: 'Inspelningen är bifogad till #{number}.',
     addFailed: 'Det gick inte att lägga till. Kontrollera anslutningen och försök igen.',
-    markOnScreen: 'Markera på skärmen',
+    markOnScreen: 'Markera skärmbild',
     addHint: 'Lägg till något…',
     screenshotLabel: 'Skärmbild',
     screenshotMarked: 'Skärmbild, markerad',
@@ -256,6 +290,10 @@ class SeaproofStrings {
     toolArrow: 'Pil',
     toolPen: 'Rita',
     toolHide: 'Dölj',
+    pasteScreenshot: 'Klistra in skärmbild',
+    pastedScreenshot: 'Inklistrad skärmbild',
+    noClipboardScreenshot: 'Det finns ingen skärmbild att klistra in. Kopiera en bild först.',
+    pasteScreenshotFailed: 'Bilden gick inte att klistra in. Prova med en mindre skärmbild.',
   );
 
   /// The built-in texts for [locale]: Swedish for `sv`, English otherwise.
@@ -273,8 +311,14 @@ class SeaproofStrings {
   /// Shown when the description is empty.
   final String descriptionRequired;
 
-  /// Label of the e-mail field for anonymous users.
+  /// Label of the optional e-mail field.
   final String emailLabel;
+
+  /// Opens the e-mail field.
+  final String addEmail;
+
+  /// Opens the e-mail field when it already has an address.
+  final String editEmail;
 
   /// Consent checkbox.
   final String mayContact;
@@ -297,6 +341,9 @@ class SeaproofStrings {
   /// Close button.
   final String close;
 
+  /// Dismisses the keyboard without closing the panel or losing the draft.
+  final String hideKeyboard;
+
   /// Success heading.
   final String thanks;
 
@@ -317,6 +364,24 @@ class SeaproofStrings {
 
   /// Finish annotating.
   final String done;
+
+  /// Closes the conversation after the report has been sent.
+  final String closeChat;
+
+  /// Applies the edits made to a screenshot.
+  final String applyScreenshotEdits;
+
+  /// Heading for attachments in a submitted conversation.
+  final String attachments;
+
+  /// Label for a saved screen recording.
+  final String screenRecording;
+
+  /// Reporter-facing messages for public status changes.
+  final Map<PublicStatus, String> statusUpdates;
+
+  /// Text for a status entry in the conversation.
+  String statusUpdate(PublicStatus status) => statusUpdates[status] ?? statusLabels[status]!;
 
   /// Tooltip and semantics label of the floating button and [SeaproofFeedbackButton].
   final String openFeedback;
@@ -476,6 +541,18 @@ class SeaproofStrings {
 
   /// Annotation tool: hides something private.
   final String toolHide;
+
+  /// Reads a screenshot from the clipboard at the reporter's request.
+  final String pasteScreenshot;
+
+  /// Label for an attachment pasted into the draft.
+  final String pastedScreenshot;
+
+  /// Shown when there is no image on the clipboard.
+  final String noClipboardScreenshot;
+
+  /// Shown when the image could not be read or is too large to attach.
+  final String pasteScreenshotFailed;
 
   /// [recordingAttached] for [duration].
   String recordingLabel(Duration duration) => recordingAttached.replaceAll('{duration}', formatDuration(duration));
